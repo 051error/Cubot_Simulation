@@ -1,0 +1,139 @@
+<?xml version="1.0" ?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+<!-- ============================================================================
+  Wheel v2 - Detailed multi-part wheel + axle assembly
+  - Tire - dark rubber cylinder (r=22.5mm, w=10mm)
+  - Rim - silver metal cylinder (r=14mm, w=7mm)
+  - Axle stub - thin cylinder spanning from center to wheel
+  - Rear - differential drive, Front - passive casters
+  ============================================================================ -->
+
+<xacro:property name="wheel_radius" value="0.0225" />
+<xacro:property name="tire_width" value="0.010" />
+<xacro:property name="body_bottom_z" value="-0.0234" />
+<xacro:property name="wheel_axle_z" value="-0.0548" />
+<xacro:property name="bracket_z" value="0.051" />             <!-- vertical length 51mm -->
+<xacro:property name="bracket_wx" value="0.010" />            <!-- thickness X -->
+<xacro:property name="bracket_wy" value="0.005" />            <!-- width Y -->
+<xacro:property name="axle_gap" value="0.020" />              <!-- bracket→wheel Y gap -->
+<xacro:property name="axle_radius" value="0.004" />
+<xacro:property name="bracket_mass" value="0.022" />
+
+<xacro:property name="wheel_x_rear" value="-0.100" />
+<xacro:property name="wheel_x_front" value="0.100" />
+<xacro:property name="wheel_y" value="0.050" />
+<xacro:property name="bracket_y" value="0.030" />
+
+<xacro:property name="wheel_total_Ixx" value="0.00000324" />
+<xacro:property name="wheel_total_Iyy" value="0.00000605" />
+<xacro:property name="wheel_total_Izz" value="0.00000324" />
+
+<!-- Bracket inertia: box 10×5×51mm, 22g -->
+<xacro:property name="bracket_Ixx" value="0.00000481" />
+<xacro:property name="bracket_Iyy" value="0.00000495" />
+<xacro:property name="bracket_Izz" value="0.00000023" />
+
+<!-- Bracket center: top fixed, bottom 5mm below axle -->
+<xacro:property name="bracket_center_z" value="${wheel_axle_z + 0.0205}" />
+
+<xacro:property name="PI" value="3.14159265359" />
+
+<!-- ===== Axle + Wheel assembly macro ===== -->
+<xacro:macro name="wheel_assembly" params="suffix x y_sign effort velocity">
+
+  <!-- Bracket + axle mount, fixed to base_link -->
+  <link name="mount_${suffix}">
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <mass value="${bracket_mass}" />
+      <inertia ixx="${bracket_Ixx}" ixy="0.0" ixz="0.0"
+               iyy="${bracket_Iyy}" iyz="0.0"
+               izz="${bracket_Izz}" />
+    </inertial>
+    <!-- Bracket - vertical plate, top at body bottom, 36mm tall -->
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <box size="${bracket_wx} ${bracket_wy} ${bracket_z}" />
+      </geometry>
+      <material name="MountColor"><color rgba="0.22 0.22 0.22 1.0"/></material>
+    </visual>
+    <!-- Axle connector - cylinder from bracket to wheel hub -->
+    <visual>
+      <origin xyz="0 ${y_sign * axle_gap/2} ${wheel_axle_z - bracket_center_z}" rpy="${PI/2} 0 0" />
+      <geometry>
+        <cylinder radius="${axle_radius}" length="${axle_gap}" />
+      </geometry>
+      <material name="MountColor"><color rgba="0.22 0.22 0.22 1.0"/></material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <box size="${bracket_wx} ${bracket_wy} ${bracket_z}" />
+      </geometry>
+    </collision>
+  </link>
+
+  <joint name="j_mount_${suffix}" type="fixed">
+    <parent link="base_link"/>
+    <child link="mount_${suffix}"/>
+    <origin xyz="${x} ${y_sign * bracket_y} ${bracket_center_z}" rpy="0 0 0" />
+  </joint>
+
+  <!-- Wheel attached at end of axle connector -->
+  <link name="wheel_${suffix}">
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <mass value="0.035" />
+      <inertia ixx="${wheel_total_Ixx}" ixy="0.0" ixz="0.0"
+               iyy="${wheel_total_Iyy}" iyz="0.0"
+               izz="${wheel_total_Izz}" />
+    </inertial>
+    <!-- Detailed wheel mesh (tire + rim + spokes) -->
+    <visual>
+      <origin xyz="0 0 0" rpy="${PI/2} 0 0" />
+      <geometry>
+        <cylinder radius="0.0225" length="0.010"/>
+      </geometry>
+      <material name="WheelGray">
+        <color rgba="0.22 0.22 0.22 1.0" />
+      </material>
+    </visual>
+    <!-- Collision - single cylinder matching tire outer -->
+    <collision>
+      <origin xyz="0 0 0" rpy="${PI/2} 0 0" />
+      <geometry><cylinder radius="${wheel_radius}" length="${tire_width}" /></geometry>
+    </collision>
+  </link>
+
+  <!-- Wheel rotates at end of axle connector -->
+  <joint name="j_wheel_${suffix}" type="continuous">
+    <parent link="mount_${suffix}"/>
+    <child link="wheel_${suffix}"/>
+    <origin xyz="0 ${y_sign * axle_gap} ${wheel_axle_z - bracket_center_z}" rpy="0 0 0" />
+    <axis xyz="0 1 0" />
+    <limit effort="${effort}" velocity="100.0" />
+    <dynamics damping="0.1" friction="0.05" />
+  </joint>
+
+</xacro:macro>
+
+<!-- ===== Instantiate 4 wheels ===== -->
+
+<!-- Rear-left -->
+<xacro:wheel_assembly suffix="rear_left" x="${wheel_x_rear}" y_sign="1"
+    effort="5.0" velocity="100.0" />
+
+<!-- Rear-right -->
+<xacro:wheel_assembly suffix="rear_right" x="${wheel_x_rear}" y_sign="-1"
+    effort="5.0" velocity="100.0" />
+
+<!-- Front-left -->
+<xacro:wheel_assembly suffix="front_left" x="${wheel_x_front}" y_sign="1"
+    effort="5.0" velocity="100.0" />
+
+<!-- Front-right -->
+<xacro:wheel_assembly suffix="front_right" x="${wheel_x_front}" y_sign="-1"
+    effort="5.0" velocity="100.0" />
+
+</robot>

@@ -1,0 +1,26 @@
+<mujoco>
+  <asset>
+    <texture type="skybox" builtin="gradient" rgb1="0.2 0.3 0.5" rgb2="0.05 0.1 0.2"
+             width="512" height="512"/>
+    <texture name="grid" type="2d" builtin="checker" width="512" height="512"
+             rgb1="0.2 0.2 0.2" rgb2="0.4 0.4 0.4"/>
+    <material name="grid_mat" texture="grid" texrepeat="16 16" reflectance="0.1"/>
+  </asset>
+
+  <visual>
+    <headlight ambient="0.5 0.5 0.5" diffuse="0.8 0.8 0.8" specular="0.2 0.2 0.2"/>
+  </visual>
+
+  <worldbody>
+    <!-- Checkerboard floor -->
+    <geom name="floor" type="plane" size="0 0 0.05" material="grid_mat"/>
+
+    <!-- Spotlights for better illumination -->
+    <light name="spot1" pos="0 0 2" dir="0 0 -1" castshadow="false"
+           diffuse="0.8 0.8 0.8" specular="0.3 0.3 0.3"/>
+    <light name="spot2" pos="1 1 1.5" dir="-0.5 -0.5 -1" castshadow="false"
+           diffuse="0.4 0.4 0.4"/>
+    <light name="spot3" pos="-1 1 1.5" dir="0.5 -0.5 -1" castshadow="false"
+           diffuse="0.4 0.4 0.4"/>
+  </worldbody>
+</mujoco>

@@ -1,0 +1,267 @@
+<?xml version="1.0" ?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+<!-- ============================================================================
+  PhantomX Hexapod - MuJoCo-ready URDF (Box-only Visual)
+  Collision geometries - simple boxes (no external mesh files)
+  Inertia - calculated via box formula I = m/12 * (a^2 + b^2)
+  Masses - estimated from STL bounding-box volume x effective density
+
+  All values derived from STL file bounding box analysis (meshes not required) -
+    body box   - 273.5 x 230.0 x  45.5 mm
+    coxa box   -  49.4 x  43.2 x  22.5 mm
+    femur box  -  50.9 x  87.0 x  41.5 mm
+    tibia box  -  48.0 x 175.4 x  70.6 mm
+  ============================================================================ -->
+
+<!-- ========== Collision box half-extents (meters) ========== -->
+<xacro:property name="body_box_x" value="0.1368" />
+<xacro:property name="body_box_y" value="0.1150" />
+<xacro:property name="body_box_z" value="0.0228" />
+
+<xacro:property name="coxa_box_x" value="0.0247" />
+<xacro:property name="coxa_box_y" value="0.0216" />
+<xacro:property name="coxa_box_z" value="0.0112" />
+
+<xacro:property name="femur_box_x" value="0.0255" />
+<xacro:property name="femur_box_y" value="0.0435" />
+<xacro:property name="femur_box_z" value="0.0208" />
+
+<xacro:property name="tibia_box_x" value="0.0240" />
+<xacro:property name="tibia_box_y" value="0.0877" />
+<xacro:property name="tibia_box_z" value="0.0353" />
+
+<!-- ========== Collision box center offsets in link frame (meters) ========== -->
+<!-- Body - STL center at (-0.2, 0.1, -0.6)mm ≈ (0, 0, 0) -->
+<xacro:property name="body_col_ox" value="0.0" />
+<xacro:property name="body_col_oy" value="0.0" />
+<xacro:property name="body_col_oz" value="0.0" />
+
+<!-- Coxa/Connect - STL center at (0.1, 16.1, -0.1)mm in STL coords
+     Visual origin at (0, -0.0252, 0) maps STL→link frame
+     Link-frame center ≈ (0, -0.009, 0) -->
+<xacro:property name="coxa_col_ox" value="0.0" />
+<xacro:property name="coxa_col_oy" value="-0.0091" />
+<xacro:property name="coxa_col_oz" value="0.0" />
+
+<!-- Femur/Thigh - STL center at (1.1, -32.0, -4.8)mm ≈ (0, -0.032, -0.005)m -->
+<xacro:property name="femur_col_ox" value="0.0" />
+<xacro:property name="femur_col_oy" value="-0.0320" />
+<xacro:property name="femur_col_oz" value="-0.0048" />
+
+<!-- Tibia/Foot - STL center at (-0.9, 72.9, 21.0)mm ≈ (0, 0.073, 0.021)m -->
+<xacro:property name="tibia_col_ox" value="0.0" />
+<xacro:property name="tibia_col_oy" value="0.0729" />
+<xacro:property name="tibia_col_oz" value="0.0210" />
+
+<!-- ========== Joint link offsets (keep original) ========== -->
+<xacro:property name="connect_offset" value="0.02633" />
+<xacro:property name="thigh_offset_y" value="-0.0645" />
+<xacro:property name="thigh_offset_z" value="-0.0145" />
+
+
+<xacro:macro name="phantomx" params="parent *origin">
+
+  <joint name="j_phantomx_attachment" type="fixed">
+    <parent link="${parent}"/>
+    <child link="MP_BODY"/>
+    <insert_block name="origin" />
+  </joint>
+
+  <!-- ===== BODY =====
+       Box - 273.5 × 230.0 × 45.5 mm, centered at STL origin
+       Mass - 0.976 kg (original value, includes body plates + electronics)
+       Inertia - I = m/12 × (a²+b²) about box center -->
+  <link name="MP_BODY">
+    <inertial>
+      <origin xyz="${body_col_ox} ${body_col_oy} ${body_col_oz}" rpy="0 0 0" />
+      <mass value="0.976" />
+      <!-- Box inertia - m/12 * diag(dy²+dz², dx²+dz², dx²+dy²) -->
+      <inertia ixx="0.004471" ixy="0.0" ixz="0.0"
+               iyy="0.006252" iyz="0.0"
+               izz="0.010386" />
+    </inertial>
+    <visual>
+      <origin xyz="${body_col_ox} ${body_col_oy} ${body_col_oz}" rpy="0 0 0" />
+      <geometry>
+        <box size="${body_box_x*2} ${body_box_y*2} ${body_box_z*2}" />
+      </geometry>
+      <material name="Grey">
+        <color rgba="0.20 0.20 0.20 1.0"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="${body_col_ox} ${body_col_oy} ${body_col_oz}" rpy="0 0 0" />
+      <geometry>
+        <box size="${body_box_x*2} ${body_box_y*2} ${body_box_z*2}" />
+      </geometry>
+    </collision>
+  </link>
+
+  <!-- ===== 6 LEGS ===== -->
+  <!-- Right side -->
+  <xacro:leg xyz="0.1248 -0.06164  0.001116"  rpy="0 4.7123 0.7853981633974483" suffix="rf"/>
+  <xacro:leg xyz="0 -0.1034  0.001116"  rpy="0 4.7123 0" suffix="rm"/>
+  <xacro:leg xyz="-0.1248 -0.06164  0.001116"  rpy="0 4.7123 -0.7853981633974483" suffix="rr"/>
+
+  <!-- Left side -->
+  <xacro:leg xyz="0.1248 0.06164  0.001116"  rpy="0 4.7123 2.356194490192345" suffix="lf"/>
+  <xacro:leg xyz="0 0.1034  0.001116"  rpy="0 4.7123 3.14159" suffix="lm"/>
+  <xacro:leg xyz="-0.1248 0.06164  0.001116"  rpy="0 4.7123 3.9269908169872414" suffix="lr"/>
+
+</xacro:macro>
+
+
+<!-- ===== SINGLE LEG MACRO =====
+     Each leg - c1 (coxa) → c2 (coxa extender) → thigh (femur) → tibia (foot)
+     3 revolute joints (all rotate around local X axis) + 1 fixed joint (c1→c2) -->
+<xacro:macro name="leg" params="xyz rpy suffix">
+
+  <!-- ===== c1 - Coxa bracket =====
+       Box - 49.4 × 43.2 × 22.5 mm, mass 30g
+       I = m/12 * diag(dy²+dz², dx²+dz², dx²+dy²) -->
+  <link name="c1_${suffix}">
+    <inertial>
+      <origin xyz="${coxa_col_ox} ${coxa_col_oy} ${coxa_col_oz}" rpy="0 0 0" />
+      <mass value="0.030" />
+      <inertia ixx="0.00000593" ixy="0.0" ixz="0.0"
+               iyy="0.00000737" iyz="0.0"
+               izz="0.00001077" />
+    </inertial>
+    <visual>
+      <origin xyz="${coxa_col_ox} ${coxa_col_oy} ${coxa_col_oz}" rpy="0 0 0" />
+      <geometry>
+        <box size="${coxa_box_x*2} ${coxa_box_y*2} ${coxa_box_z*2}" />
+      </geometry>
+      <material name="Grey">
+        <color rgba="0.20 0.20 0.20 1.0"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="${coxa_col_ox} ${coxa_col_oy} ${coxa_col_oz}" rpy="0 0 0" />
+      <geometry>
+        <box size="${coxa_box_x*2} ${coxa_box_y*2} ${coxa_box_z*2}" />
+      </geometry>
+    </collision>
+  </link>
+
+  <!-- ===== c2 - Coxa extender (fixed to c1) =====
+       Same geometry and mass as c1 -->
+  <link name="c2_${suffix}">
+    <inertial>
+      <origin xyz="${coxa_col_ox} ${coxa_col_oy} ${coxa_col_oz}" rpy="0 0 0" />
+      <mass value="0.030" />
+      <inertia ixx="0.00000593" ixy="0.0" ixz="0.0"
+               iyy="0.00000737" iyz="0.0"
+               izz="0.00001077" />
+    </inertial>
+    <visual>
+      <origin xyz="${coxa_col_ox} ${coxa_col_oy} ${coxa_col_oz}" rpy="0 0 0" />
+      <geometry>
+        <box size="${coxa_box_x*2} ${coxa_box_y*2} ${coxa_box_z*2}" />
+      </geometry>
+      <material name="Grey">
+        <color rgba="0.20 0.20 0.20 1.0"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="${coxa_col_ox} ${coxa_col_oy} ${coxa_col_oz}" rpy="0 0 0" />
+      <geometry>
+        <box size="${coxa_box_x*2} ${coxa_box_y*2} ${coxa_box_z*2}" />
+      </geometry>
+    </collision>
+  </link>
+
+  <!-- ===== Thigh / Femur =====
+       Box - 50.9 × 87.0 × 41.5 mm, mass 80g
+       I = m/12 * diag(dy²+dz², dx²+dz², dx²+dy²) -->
+  <link name="thigh_${suffix}">
+    <inertial>
+      <origin xyz="${femur_col_ox} ${femur_col_oy} ${femur_col_oz}" rpy="0 0 0" />
+      <mass value="0.080" />
+      <inertia ixx="0.00006194" ixy="0.0" ixz="0.0"
+               iyy="0.00002875" iyz="0.0"
+               izz="0.00006773" />
+    </inertial>
+    <visual>
+      <origin xyz="${femur_col_ox} ${femur_col_oy} ${femur_col_oz}" rpy="0 0 0" />
+      <geometry>
+        <box size="${femur_box_x*2} ${femur_box_y*2} ${femur_box_z*2}" />
+      </geometry>
+      <material name="Grey">
+        <color rgba="0.20 0.20 0.20 1.0"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="${femur_col_ox} ${femur_col_oy} ${femur_col_oz}" rpy="0 0 0" />
+      <geometry>
+        <box size="${femur_box_x*2} ${femur_box_y*2} ${femur_box_z*2}" />
+      </geometry>
+    </collision>
+  </link>
+
+  <!-- ===== Tibia / Foot =====
+       Box - 48.0 × 175.4 × 70.6 mm, mass 100g
+       I = m/12 * diag(dy²+dz², dx²+dz², dx²+dy²) -->
+  <link name="tibia_${suffix}">
+    <inertial>
+      <origin xyz="${tibia_col_ox} ${tibia_col_oy} ${tibia_col_oz}" rpy="0 0 0" />
+      <mass value="0.100" />
+      <inertia ixx="0.00029791" ixy="0.0" ixz="0.0"
+               iyy="0.00006074" iyz="0.0"
+               izz="0.00027558" />
+    </inertial>
+    <visual>
+      <origin xyz="${tibia_col_ox} ${tibia_col_oy} ${tibia_col_oz}" rpy="0 0 0" />
+      <geometry>
+        <box size="${tibia_box_x*2} ${tibia_box_y*2} ${tibia_box_z*2}" />
+      </geometry>
+      <material name="Grey">
+        <color rgba="0.20 0.20 0.20 1.0"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="${tibia_col_ox} ${tibia_col_oy} ${tibia_col_oz}" rpy="0 0 0" />
+      <geometry>
+        <box size="${tibia_box_x*2} ${tibia_box_y*2} ${tibia_box_z*2}" />
+      </geometry>
+    </collision>
+  </link>
+
+  <!-- ===== JOINTS ===== -->
+  <!-- j_c1 - body → coxa (revolute around X) -->
+  <joint name="j_c1_${suffix}" type="revolute">
+    <parent link="MP_BODY"/>
+    <child link="c1_${suffix}"/>
+    <origin xyz="${xyz}" rpy="${rpy}" />
+    <axis xyz="1 0 0" />
+    <limit effort="2.8" velocity="5.6548668" lower="-2.6179939" upper="2.6179939" />
+  </joint>
+
+  <!-- j_c2 - c1 → c2 (fixed, 54mm offset along -Y) -->
+  <joint name="j_c2_${suffix}" type="fixed">
+    <parent link="c1_${suffix}"/>
+    <child link="c2_${suffix}"/>
+    <origin xyz="0 -0.054 0" rpy="0 1.5704 3.14159" />
+  </joint>
+
+  <!-- j_thigh - c2 → thigh (revolute around X, knee joint) -->
+  <joint name="j_thigh_${suffix}" type="revolute">
+    <parent link="c2_${suffix}"/>
+    <child link="thigh_${suffix}"/>
+    <origin xyz="0 0 0" rpy="0 3.14159 3.14159" />
+    <axis xyz="1 0 0" />
+    <limit effort="2.8" velocity="5.6548668" lower="-2.6179939" upper="2.6179939" />
+  </joint>
+
+  <!-- j_tibia - thigh → tibia (revolute around X, ankle joint) -->
+  <joint name="j_tibia_${suffix}" type="revolute">
+    <parent link="thigh_${suffix}"/>
+    <child link="tibia_${suffix}"/>
+    <origin xyz="0 ${thigh_offset_y} ${thigh_offset_z}" rpy="-1.5707 0 3.14159" />
+    <axis xyz="1 0 0" />
+    <limit effort="2.8" velocity="5.6548668" lower="-2.6179939" upper="2.6179939" />
+  </joint>
+
+</xacro:macro>
+</robot>

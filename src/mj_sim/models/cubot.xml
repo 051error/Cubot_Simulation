@@ -1,0 +1,202 @@
+<mujoco model="cubot">
+  <compiler angle="radian"/>
+
+  <asset>
+    <mesh name="body" file="/home/ubunbun/test/code_test/test_item/cubot/cubot_ws/install/cubot_description/share/cubot_description/cubot_urdf/meshes/body.STL"/>
+    <mesh name="connect" file="/home/ubunbun/test/code_test/test_item/cubot/cubot_ws/install/cubot_description/share/cubot_description/cubot_urdf/meshes/connect.STL"/>
+    <mesh name="thigh_l" file="/home/ubunbun/test/code_test/test_item/cubot/cubot_ws/install/cubot_description/share/cubot_description/cubot_urdf/meshes/thigh_l.STL"/>
+    <mesh name="tibia_l" file="/home/ubunbun/test/code_test/test_item/cubot/cubot_ws/install/cubot_description/share/cubot_description/cubot_urdf/meshes/tibia_l.STL"/>
+  </asset>
+
+  <worldbody>
+    <body name="root" pos="0 0 0">
+      <freejoint/>
+      <body name="base_link" pos="0.0 0.0 0.174">
+        <body name="MP_BODY" pos="0.0 0.0 0.0">
+          <inertial pos="0.0 0.0 0.0" mass="0.976" diaginertia="0.004471 0.006252 0.010386"/>
+          <geom type="mesh" mesh="body" pos="0 0 0" rgba="0.4 0.4 0.4 1"/>
+          <geom type="box" size="0.062 0.059 0.008" pos="0.0 0.0 0.0" group="3" rgba="0 0 0 0"/>
+          <body name="c1_rf" pos="0.1248 -0.06164 0.001116" quat="-0.653252 -0.27061 0.653311 -0.270586">
+            <inertial pos="0.0 -0.0091 0.0" mass="0.030" diaginertia="0.00000593 0.00000737 0.00001077"/>
+            <joint name="j_c1_rf" type="hinge" axis="1 0 0" range="-2.6179939 2.6179939" actuatorfrcrange="-2.8 2.8" damping="0.5" frictionloss="0.1"/>
+            <geom type="mesh" mesh="connect" pos="0 -0.0252 0" rgba="0.4 0.4 0.4 1"/>
+            <geom type="box" size="0.013 0.011 0.005" pos="0.0 -0.0091 0.0" group="3" rgba="0 0 0 0"/>
+            <body name="c2_rf" pos="0.0 -0.054 0.0" quat="9.38372e-07 -0.706967 9.38e-07 0.707247">
+              <inertial pos="0.0 -0.0091 0.0" mass="0.030" diaginertia="0.00000593 0.00000737 0.00001077"/>
+              <geom type="mesh" mesh="connect" pos="0 -0.0252 0" rgba="0.4 0.4 0.4 1"/>
+              <geom type="box" size="0.013 0.011 0.005" pos="0.0 -0.0091 0.0" group="3" rgba="0 0 0 0"/>
+              <body name="thigh_rf" pos="0.0 0.0 0.0" quat="1.76038e-12 -1 1.32679e-06 1.32679e-06">
+                <inertial pos="0.0 -0.032 -0.0048" mass="0.080" diaginertia="0.00006194 0.00002875 0.00006773"/>
+                <joint name="j_thigh_rf" type="hinge" axis="1 0 0" range="-2.6179939 2.6179939" actuatorfrcrange="-2.8 2.8" damping="0.5" frictionloss="0.1"/>
+                <geom type="mesh" mesh="thigh_l" pos="0 0 0" rgba="0.4 0.4 0.4 1"/>
+                <geom type="box" size="0.006 0.017 0.005" pos="0.0 -0.032 -0.0048" group="3" rgba="0 0 0 0"/>
+                <body name="tibia_rf" pos="0.0 -0.0645 -0.0145" quat="9.38231e-07 -9.3814e-07 -0.707073 0.707141">
+                  <inertial pos="0.0 0.0729 0.021" mass="0.100" diaginertia="0.00029791 0.00006074 0.00027558"/>
+                  <joint name="j_tibia_rf" type="hinge" axis="1 0 0" range="-2.6179939 2.6179939" actuatorfrcrange="-2.8 2.8" damping="0.5" frictionloss="0.1"/>
+                  <geom type="mesh" mesh="tibia_l" pos="0 0 0" rgba="0.4 0.4 0.4 1"/>
+                  <geom type="box" size="0.005 0.04 0.007" pos="0.0 0.0729 0.021" group="3" rgba="0 0 0 0"/>
+                </body>
+              </body>
+            </body>
+          </body>
+          <body name="c1_rm" pos="0.0 -0.1034 0.001116" quat="-0.707075 -0 0.707138 -0">
+            <inertial pos="0.0 -0.0091 0.0" mass="0.030" diaginertia="0.00000593 0.00000737 0.00001077"/>
+            <joint name="j_c1_rm" type="hinge" axis="1 0 0" range="-2.6179939 2.6179939" actuatorfrcrange="-2.8 2.8" damping="0.5" frictionloss="0.1"/>
+            <geom type="mesh" mesh="connect" pos="0 -0.0252 0" rgba="0.4 0.4 0.4 1"/>
+            <geom type="box" size="0.013 0.011 0.005" pos="0.0 -0.0091 0.0" group="3" rgba="0 0 0 0"/>
+            <body name="c2_rm" pos="0.0 -0.054 0.0" quat="9.38372e-07 -0.706967 9.38e-07 0.707247">
+              <inertial pos="0.0 -0.0091 0.0" mass="0.030" diaginertia="0.00000593 0.00000737 0.00001077"/>
+              <geom type="mesh" mesh="connect" pos="0 -0.0252 0" rgba="0.4 0.4 0.4 1"/>
+              <geom type="box" size="0.013 0.011 0.005" pos="0.0 -0.0091 0.0" group="3" rgba="0 0 0 0"/>
+              <body name="thigh_rm" pos="0.0 0.0 0.0" quat="1.76038e-12 -1 1.32679e-06 1.32679e-06">
+                <inertial pos="0.0 -0.032 -0.0048" mass="0.080" diaginertia="0.00006194 0.00002875 0.00006773"/>
+                <joint name="j_thigh_rm" type="hinge" axis="1 0 0" range="-2.6179939 2.6179939" actuatorfrcrange="-2.8 2.8" damping="0.5" frictionloss="0.1"/>
+                <geom type="mesh" mesh="thigh_l" pos="0 0 0" rgba="0.4 0.4 0.4 1"/>
+                <geom type="box" size="0.006 0.017 0.005" pos="0.0 -0.032 -0.0048" group="3" rgba="0 0 0 0"/>
+                <body name="tibia_rm" pos="0.0 -0.0645 -0.0145" quat="9.38231e-07 -9.3814e-07 -0.707073 0.707141">
+                  <inertial pos="0.0 0.0729 0.021" mass="0.100" diaginertia="0.00029791 0.00006074 0.00027558"/>
+                  <joint name="j_tibia_rm" type="hinge" axis="1 0 0" range="-2.6179939 2.6179939" actuatorfrcrange="-2.8 2.8" damping="0.5" frictionloss="0.1"/>
+                  <geom type="mesh" mesh="tibia_l" pos="0 0 0" rgba="0.4 0.4 0.4 1"/>
+                  <geom type="box" size="0.005 0.04 0.007" pos="0.0 0.0729 0.021" group="3" rgba="0 0 0 0"/>
+                </body>
+              </body>
+            </body>
+          </body>
+          <body name="c1_rr" pos="-0.1248 -0.06164 0.001116" quat="-0.653252 0.27061 0.653311 0.270586">
+            <inertial pos="0.0 -0.0091 0.0" mass="0.030" diaginertia="0.00000593 0.00000737 0.00001077"/>
+            <joint name="j_c1_rr" type="hinge" axis="1 0 0" range="-2.6179939 2.6179939" actuatorfrcrange="-2.8 2.8" damping="0.5" frictionloss="0.1"/>
+            <geom type="mesh" mesh="connect" pos="0 -0.0252 0" rgba="0.4 0.4 0.4 1"/>
+            <geom type="box" size="0.013 0.011 0.005" pos="0.0 -0.0091 0.0" group="3" rgba="0 0 0 0"/>
+            <body name="c2_rr" pos="0.0 -0.054 0.0" quat="9.38372e-07 -0.706967 9.38e-07 0.707247">
+              <inertial pos="0.0 -0.0091 0.0" mass="0.030" diaginertia="0.00000593 0.00000737 0.00001077"/>
+              <geom type="mesh" mesh="connect" pos="0 -0.0252 0" rgba="0.4 0.4 0.4 1"/>
+              <geom type="box" size="0.013 0.011 0.005" pos="0.0 -0.0091 0.0" group="3" rgba="0 0 0 0"/>
+              <body name="thigh_rr" pos="0.0 0.0 0.0" quat="1.76038e-12 -1 1.32679e-06 1.32679e-06">
+                <inertial pos="0.0 -0.032 -0.0048" mass="0.080" diaginertia="0.00006194 0.00002875 0.00006773"/>
+                <joint name="j_thigh_rr" type="hinge" axis="1 0 0" range="-2.6179939 2.6179939" actuatorfrcrange="-2.8 2.8" damping="0.5" frictionloss="0.1"/>
+                <geom type="mesh" mesh="thigh_l" pos="0 0 0" rgba="0.4 0.4 0.4 1"/>
+                <geom type="box" size="0.006 0.017 0.005" pos="0.0 -0.032 -0.0048" group="3" rgba="0 0 0 0"/>
+                <body name="tibia_rr" pos="0.0 -0.0645 -0.0145" quat="9.38231e-07 -9.3814e-07 -0.707073 0.707141">
+                  <inertial pos="0.0 0.0729 0.021" mass="0.100" diaginertia="0.00029791 0.00006074 0.00027558"/>
+                  <joint name="j_tibia_rr" type="hinge" axis="1 0 0" range="-2.6179939 2.6179939" actuatorfrcrange="-2.8 2.8" damping="0.5" frictionloss="0.1"/>
+                  <geom type="mesh" mesh="tibia_l" pos="0 0 0" rgba="0.4 0.4 0.4 1"/>
+                  <geom type="box" size="0.005 0.04 0.007" pos="0.0 0.0729 0.021" group="3" rgba="0 0 0 0"/>
+                </body>
+              </body>
+            </body>
+          </body>
+          <body name="c1_lf" pos="0.1248 0.06164 0.001116" quat="-0.270586 -0.653311 0.27061 -0.653252">
+            <inertial pos="0.0 -0.0091 0.0" mass="0.030" diaginertia="0.00000593 0.00000737 0.00001077"/>
+            <joint name="j_c1_lf" type="hinge" axis="1 0 0" range="-2.6179939 2.6179939" actuatorfrcrange="-2.8 2.8" damping="0.5" frictionloss="0.1"/>
+            <geom type="mesh" mesh="connect" pos="0 -0.0252 0" rgba="0.4 0.4 0.4 1"/>
+            <geom type="box" size="0.013 0.011 0.005" pos="0.0 -0.0091 0.0" group="3" rgba="0 0 0 0"/>
+            <body name="c2_lf" pos="0.0 -0.054 0.0" quat="9.38372e-07 -0.706967 9.38e-07 0.707247">
+              <inertial pos="0.0 -0.0091 0.0" mass="0.030" diaginertia="0.00000593 0.00000737 0.00001077"/>
+              <geom type="mesh" mesh="connect" pos="0 -0.0252 0" rgba="0.4 0.4 0.4 1"/>
+              <geom type="box" size="0.013 0.011 0.005" pos="0.0 -0.0091 0.0" group="3" rgba="0 0 0 0"/>
+              <body name="thigh_lf" pos="0.0 0.0 0.0" quat="1.76038e-12 -1 1.32679e-06 1.32679e-06">
+                <inertial pos="0.0 -0.032 -0.0048" mass="0.080" diaginertia="0.00006194 0.00002875 0.00006773"/>
+                <joint name="j_thigh_lf" type="hinge" axis="1 0 0" range="-2.6179939 2.6179939" actuatorfrcrange="-2.8 2.8" damping="0.5" frictionloss="0.1"/>
+                <geom type="mesh" mesh="thigh_l" pos="0 0 0" rgba="0.4 0.4 0.4 1"/>
+                <geom type="box" size="0.006 0.017 0.005" pos="0.0 -0.032 -0.0048" group="3" rgba="0 0 0 0"/>
+                <body name="tibia_lf" pos="0.0 -0.0645 -0.0145" quat="9.38231e-07 -9.3814e-07 -0.707073 0.707141">
+                  <inertial pos="0.0 0.0729 0.021" mass="0.100" diaginertia="0.00029791 0.00006074 0.00027558"/>
+                  <joint name="j_tibia_lf" type="hinge" axis="1 0 0" range="-2.6179939 2.6179939" actuatorfrcrange="-2.8 2.8" damping="0.5" frictionloss="0.1"/>
+                  <geom type="mesh" mesh="tibia_l" pos="0 0 0" rgba="0.4 0.4 0.4 1"/>
+                  <geom type="box" size="0.005 0.04 0.007" pos="0.0 0.0729 0.021" group="3" rgba="0 0 0 0"/>
+                </body>
+              </body>
+            </body>
+          </body>
+          <body name="c1_lm" pos="0.0 0.1034 0.001116" quat="-9.38144e-07 -0.707138 9.38227e-07 -0.707075">
+            <inertial pos="0.0 -0.0091 0.0" mass="0.030" diaginertia="0.00000593 0.00000737 0.00001077"/>
+            <joint name="j_c1_lm" type="hinge" axis="1 0 0" range="-2.6179939 2.6179939" actuatorfrcrange="-2.8 2.8" damping="0.5" frictionloss="0.1"/>
+            <geom type="mesh" mesh="connect" pos="0 -0.0252 0" rgba="0.4 0.4 0.4 1"/>
+            <geom type="box" size="0.013 0.011 0.005" pos="0.0 -0.0091 0.0" group="3" rgba="0 0 0 0"/>
+            <body name="c2_lm" pos="0.0 -0.054 0.0" quat="9.38372e-07 -0.706967 9.38e-07 0.707247">
+              <inertial pos="0.0 -0.0091 0.0" mass="0.030" diaginertia="0.00000593 0.00000737 0.00001077"/>
+              <geom type="mesh" mesh="connect" pos="0 -0.0252 0" rgba="0.4 0.4 0.4 1"/>
+              <geom type="box" size="0.013 0.011 0.005" pos="0.0 -0.0091 0.0" group="3" rgba="0 0 0 0"/>
+              <body name="thigh_lm" pos="0.0 0.0 0.0" quat="1.76038e-12 -1 1.32679e-06 1.32679e-06">
+                <inertial pos="0.0 -0.032 -0.0048" mass="0.080" diaginertia="0.00006194 0.00002875 0.00006773"/>
+                <joint name="j_thigh_lm" type="hinge" axis="1 0 0" range="-2.6179939 2.6179939" actuatorfrcrange="-2.8 2.8" damping="0.5" frictionloss="0.1"/>
+                <geom type="mesh" mesh="thigh_l" pos="0 0 0" rgba="0.4 0.4 0.4 1"/>
+                <geom type="box" size="0.006 0.017 0.005" pos="0.0 -0.032 -0.0048" group="3" rgba="0 0 0 0"/>
+                <body name="tibia_lm" pos="0.0 -0.0645 -0.0145" quat="9.38231e-07 -9.3814e-07 -0.707073 0.707141">
+                  <inertial pos="0.0 0.0729 0.021" mass="0.100" diaginertia="0.00029791 0.00006074 0.00027558"/>
+                  <joint name="j_tibia_lm" type="hinge" axis="1 0 0" range="-2.6179939 2.6179939" actuatorfrcrange="-2.8 2.8" damping="0.5" frictionloss="0.1"/>
+                  <geom type="mesh" mesh="tibia_l" pos="0 0 0" rgba="0.4 0.4 0.4 1"/>
+                  <geom type="box" size="0.005 0.04 0.007" pos="0.0 0.0729 0.021" group="3" rgba="0 0 0 0"/>
+                </body>
+              </body>
+            </body>
+          </body>
+          <body name="c1_lr" pos="-0.1248 0.06164 0.001116" quat="0.270586 -0.653311 -0.27061 -0.653252">
+            <inertial pos="0.0 -0.0091 0.0" mass="0.030" diaginertia="0.00000593 0.00000737 0.00001077"/>
+            <joint name="j_c1_lr" type="hinge" axis="1 0 0" range="-2.6179939 2.6179939" actuatorfrcrange="-2.8 2.8" damping="0.5" frictionloss="0.1"/>
+            <geom type="mesh" mesh="connect" pos="0 -0.0252 0" rgba="0.4 0.4 0.4 1"/>
+            <geom type="box" size="0.013 0.011 0.005" pos="0.0 -0.0091 0.0" group="3" rgba="0 0 0 0"/>
+            <body name="c2_lr" pos="0.0 -0.054 0.0" quat="9.38372e-07 -0.706967 9.38e-07 0.707247">
+              <inertial pos="0.0 -0.0091 0.0" mass="0.030" diaginertia="0.00000593 0.00000737 0.00001077"/>
+              <geom type="mesh" mesh="connect" pos="0 -0.0252 0" rgba="0.4 0.4 0.4 1"/>
+              <geom type="box" size="0.013 0.011 0.005" pos="0.0 -0.0091 0.0" group="3" rgba="0 0 0 0"/>
+              <body name="thigh_lr" pos="0.0 0.0 0.0" quat="1.76038e-12 -1 1.32679e-06 1.32679e-06">
+                <inertial pos="0.0 -0.032 -0.0048" mass="0.080" diaginertia="0.00006194 0.00002875 0.00006773"/>
+                <joint name="j_thigh_lr" type="hinge" axis="1 0 0" range="-2.6179939 2.6179939" actuatorfrcrange="-2.8 2.8" damping="0.5" frictionloss="0.1"/>
+                <geom type="mesh" mesh="thigh_l" pos="0 0 0" rgba="0.4 0.4 0.4 1"/>
+                <geom type="box" size="0.006 0.017 0.005" pos="0.0 -0.032 -0.0048" group="3" rgba="0 0 0 0"/>
+                <body name="tibia_lr" pos="0.0 -0.0645 -0.0145" quat="9.38231e-07 -9.3814e-07 -0.707073 0.707141">
+                  <inertial pos="0.0 0.0729 0.021" mass="0.100" diaginertia="0.00029791 0.00006074 0.00027558"/>
+                  <joint name="j_tibia_lr" type="hinge" axis="1 0 0" range="-2.6179939 2.6179939" actuatorfrcrange="-2.8 2.8" damping="0.5" frictionloss="0.1"/>
+                  <geom type="mesh" mesh="tibia_l" pos="0 0 0" rgba="0.4 0.4 0.4 1"/>
+                  <geom type="box" size="0.005 0.04 0.007" pos="0.0 0.0729 0.021" group="3" rgba="0 0 0 0"/>
+                </body>
+              </body>
+            </body>
+          </body>
+        </body>
+        <body name="box_container" pos="0.0 0.0 0.1028">
+          <inertial pos="0 0 0" mass="0.850" diaginertia="0.0033 0.0033 0.0046"/>
+          <geom type="box" size="0.08 0.08 0.0025" pos="0 0 -0.0775" rgba="0.4 0.4 0.4 1"/>
+          <geom type="box" size="0.0025 0.08 0.08" pos="0.075 0 0" rgba="0.4 0.4 0.4 1"/>
+          <geom type="box" size="0.0025 0.08 0.08" pos="-0.075 0 0" rgba="0.4 0.4 0.4 1"/>
+          <geom type="box" size="0.08 0.0025 0.08" pos="0 0.075 0" rgba="0.4 0.4 0.4 1"/>
+          <geom type="box" size="0.08 0.0025 0.08" pos="0 -0.075 0" rgba="0.4 0.4 0.4 1"/>
+          <geom type="box" size="0.08 0.08 0.08" pos="0 0 0" group="3" rgba="0 0 0 0"/>
+          <body name="lid_rear" pos="-0.04 0.0 0.08">
+            <inertial pos="0 0 0" mass="0.120" diaginertia="0.00052 0.00013 0.00065"/>
+            <geom type="box" size="0.04 0.08 0.0025" pos="0 0 0" rgba="0.4 0.4 0.4 1"/>
+            <geom type="box" size="0.04 0.08 0.0025" pos="0 0 0" group="3" rgba="0 0 0 0"/>
+          </body>
+          <body name="lid_front" pos="0.04 0.0 0.075">
+            <inertial pos="0 0 0" mass="0.100" diaginertia="0.00038 0.00008 0.00045"/>
+            <joint name="j_lid_front" type="slide" axis="-1 0 0" range="0 0.08" actuatorfrcrange="-10.0 10.0" damping="0.5" frictionloss="0.1"/>
+            <geom type="box" size="0.0375 0.075 0.0025" pos="0 0 0" rgba="0.4 0.4 0.4 1"/>
+            <geom type="box" size="0.0375 0.075 0.0025" pos="0 0 0" group="3" rgba="0 0 0 0"/>
+          </body>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+  <actuator>
+    <position name="a_j_c1_rf" joint="j_c1_rf" kp="5.0" kv="0.25"/>
+    <position name="a_j_thigh_rf" joint="j_thigh_rf" kp="5.0" kv="0.25"/>
+    <position name="a_j_tibia_rf" joint="j_tibia_rf" kp="5.0" kv="0.25"/>
+    <position name="a_j_c1_rm" joint="j_c1_rm" kp="5.0" kv="0.25"/>
+    <position name="a_j_thigh_rm" joint="j_thigh_rm" kp="5.0" kv="0.25"/>
+    <position name="a_j_tibia_rm" joint="j_tibia_rm" kp="5.0" kv="0.25"/>
+    <position name="a_j_c1_rr" joint="j_c1_rr" kp="5.0" kv="0.25"/>
+    <position name="a_j_thigh_rr" joint="j_thigh_rr" kp="5.0" kv="0.25"/>
+    <position name="a_j_tibia_rr" joint="j_tibia_rr" kp="5.0" kv="0.25"/>
+    <position name="a_j_c1_lf" joint="j_c1_lf" kp="5.0" kv="0.25"/>
+    <position name="a_j_thigh_lf" joint="j_thigh_lf" kp="5.0" kv="0.25"/>
+    <position name="a_j_tibia_lf" joint="j_tibia_lf" kp="5.0" kv="0.25"/>
+    <position name="a_j_c1_lm" joint="j_c1_lm" kp="5.0" kv="0.25"/>
+    <position name="a_j_thigh_lm" joint="j_thigh_lm" kp="5.0" kv="0.25"/>
+    <position name="a_j_tibia_lm" joint="j_tibia_lm" kp="5.0" kv="0.25"/>
+    <position name="a_j_c1_lr" joint="j_c1_lr" kp="5.0" kv="0.25"/>
+    <position name="a_j_thigh_lr" joint="j_thigh_lr" kp="5.0" kv="0.25"/>
+    <position name="a_j_tibia_lr" joint="j_tibia_lr" kp="5.0" kv="0.25"/>
+    <position name="a_j_lid_front" joint="j_lid_front" kp="15.0" kv="1.0" ctrlrange="0 0.08"/>
+  </actuator>
+</mujoco>

@@ -1,0 +1,24 @@
+<?xml version="1.0" ?>
+<robot name="PhantomX"  xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <xacro:include filename="./phantomx_boxes.urdf.xacro" />
+
+  <!-- Ground projection (z=0, on the floor) -->
+  <link name="base_footprint"/>
+
+  <!-- Body base frame, raised to robot body height above ground -->
+  <joint name="j_base_footprint_to_base_link" type="fixed">
+    <parent link="base_footprint"/>
+    <child link="base_link"/>
+    <origin xyz="0 0 0.174" rpy="0 0 0" />
+  </joint>
+  <link name="base_link"/>
+
+  <xacro:phantomx parent="base_link">
+    <origin xyz="0 0 0" rpy="0 0 0" />
+  </xacro:phantomx>
+
+  <!-- Wheel assembly v2 - axle + tire + rim, Y=+-70mm, no comment colons -->
+  <xacro:include filename="./wheel.xacro" />
+
+</robot>

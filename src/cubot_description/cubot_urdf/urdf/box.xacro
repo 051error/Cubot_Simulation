@@ -1,0 +1,133 @@
+<?xml version="1.0" ?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+<!-- ============================================================================
+  Box container - cube on top of chassis
+  - 180×180×180mm cube, 5mm wall thickness, open top
+  - Rear lid half - fixed on top
+  - Front lid half - slides backward under fixed rear lid (prismatic along -X)
+  ============================================================================ -->
+
+<xacro:property name="box_side" value="0.160" />
+<xacro:property name="box_height" value="${box_side}" />
+<xacro:property name="wall_t" value="0.005" />
+<xacro:property name="half" value="${box_side/2}" />
+<xacro:property name="half_h" value="${box_height/2}" />
+<xacro:property name="inner" value="${half - wall_t}" />
+
+<!-- Box center Z = chassis top + half height -->
+<xacro:property name="box_center_z" value="${0.0228 + half_h}" />
+
+<!-- ===== Box container - 5 walls (no top, open) ===== -->
+<link name="box_container">
+  <inertial>
+    <origin xyz="0 0 0" rpy="0 0 0" />
+    <mass value="0.850" />
+    <inertia ixx="0.0033" ixy="0.0" ixz="0.0"
+             iyy="0.0033" iyz="0.0"
+             izz="0.0046" />
+  </inertial>
+  <!-- Bottom -->
+  <visual>
+    <origin xyz="0 0 ${-half_h + wall_t/2}" rpy="0 0 0" />
+    <geometry><box size="${box_side} ${box_side} ${wall_t}" /></geometry>
+    <material name="BoxGray"><color rgba="0.55 0.55 0.55 1.0"/></material>
+  </visual>
+  <!-- Front wall (+X) -->
+  <visual>
+    <origin xyz="${inner} 0 0" rpy="0 0 0" />
+    <geometry><box size="${wall_t} ${box_side} ${box_height}" /></geometry>
+    <material name="BoxGray"><color rgba="0.55 0.55 0.55 1.0"/></material>
+  </visual>
+  <!-- Back wall (-X) -->
+  <visual>
+    <origin xyz="${-inner} 0 0" rpy="0 0 0" />
+    <geometry><box size="${wall_t} ${box_side} ${box_height}" /></geometry>
+    <material name="BoxGray"><color rgba="0.55 0.55 0.55 1.0"/></material>
+  </visual>
+  <!-- Left wall (+Y) -->
+  <visual>
+    <origin xyz="0 ${inner} 0" rpy="0 0 0" />
+    <geometry><box size="${box_side} ${wall_t} ${box_height}" /></geometry>
+    <material name="BoxGray"><color rgba="0.55 0.55 0.55 1.0"/></material>
+  </visual>
+  <!-- Right wall (-Y) -->
+  <visual>
+    <origin xyz="0 ${-inner} 0" rpy="0 0 0" />
+    <geometry><box size="${box_side} ${wall_t} ${box_height}" /></geometry>
+    <material name="BoxGray"><color rgba="0.55 0.55 0.55 1.0"/></material>
+  </visual>
+  <collision>
+    <origin xyz="0 0 0" rpy="0 0 0" />
+    <geometry><box size="${box_side} ${box_side} ${box_height}" /></geometry>
+  </collision>
+</link>
+
+<joint name="j_box_container" type="fixed">
+  <parent link="base_link"/>
+  <child link="box_container"/>
+  <origin xyz="0 0 ${box_center_z}" rpy="0 0 0" />
+</joint>
+
+<!-- ===== Rear lid - fixed on top of box ===== -->
+<link name="lid_rear">
+  <inertial>
+    <origin xyz="0 0 0" rpy="0 0 0" />
+    <mass value="0.120" />
+    <inertia ixx="0.00052" ixy="0.0" ixz="0.0"
+             iyy="0.00013" iyz="0.0"
+             izz="0.00065" />
+  </inertial>
+  <visual>
+    <origin xyz="0 0 0" rpy="0 0 0" />
+    <geometry><box size="${half} ${box_side} ${wall_t}" /></geometry>
+    <material name="LidColor"><color rgba="0.55 0.55 0.55 1.0"/></material>
+  </visual>
+  <collision>
+    <origin xyz="0 0 0" rpy="0 0 0" />
+    <geometry><box size="${half} ${box_side} ${wall_t}" /></geometry>
+  </collision>
+</link>
+
+<joint name="j_lid_rear" type="fixed">
+  <parent link="box_container"/>
+  <child link="lid_rear"/>
+  <origin xyz="${-half/2} 0 ${half_h}" rpy="0 0 0" />
+</joint>
+
+<!-- ===== Front lid - slides backward under rear lid to open ===== -->
+<!-- Y = box_side - 2*wall_t (fits inside walls) -->
+<!-- X = half - wall_t (slightly shorter) -->
+<!-- Z lowered by wall_t (sits below fixed lid, can slide under it) -->
+<xacro:property name="sliding_lid_y" value="${box_side - 2*wall_t}" />
+<xacro:property name="sliding_lid_x" value="${half - wall_t}" />
+
+<link name="lid_front">
+  <inertial>
+    <origin xyz="0 0 0" rpy="0 0 0" />
+    <mass value="0.100" />
+    <inertia ixx="0.00038" ixy="0.0" ixz="0.0"
+             iyy="0.00008" iyz="0.0"
+             izz="0.00045" />
+  </inertial>
+  <visual>
+    <origin xyz="0 0 0" rpy="0 0 0" />
+    <geometry><box size="${sliding_lid_x} ${sliding_lid_y} ${wall_t}" /></geometry>
+    <material name="LidColor"><color rgba="0.55 0.55 0.55 1.0"/></material>
+  </visual>
+  <collision>
+    <origin xyz="0 0 0" rpy="0 0 0" />
+    <geometry><box size="${sliding_lid_x} ${sliding_lid_y} ${wall_t}" /></geometry>
+  </collision>
+</link>
+
+<!-- Prismatic along -X - closed at front, slides backward under rear lid -->
+<joint name="j_lid_front" type="prismatic">
+  <parent link="box_container"/>
+  <child link="lid_front"/>
+  <origin xyz="${half/2} 0 ${half_h - wall_t}" rpy="0 0 0" />
+  <axis xyz="-1 0 0" />
+  <limit effort="10.0" velocity="0.5" lower="0" upper="${half}" />
+  <dynamics damping="0.5" friction="0.1" />
+</joint>
+
+</robot>
