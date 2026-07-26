@@ -1,7 +1,7 @@
 #include <mujoco/mujoco.h>
 #include <GLFW/glfw3.h>
 #include <thread>
-#include "mj_sim/low_level_ctrl.hpp"
+#include "mj_sim/robot_ctrl.hpp"
 #include "mj_sim/msg/low_state.hpp"
 #include "std_msgs/msg/float64_multi_array.hpp"
 #include "sensor_msgs/msg/image.hpp"

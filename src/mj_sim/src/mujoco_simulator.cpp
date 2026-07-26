@@ -261,17 +261,6 @@ void MujocoSimulator::low_cmd_callback(const std_msgs::msg::Float64MultiArray::S
     receive_data = true;
 }
 
-int main(int argc, char **argv)
-{
-    rclcpp::init(argc, argv);
-    auto node = std::make_shared<MujocoSimulator>();
-
-    // Blocking render loop on main thread (GL context stays here)
-    rclcpp::spin(node);
-
-    rclcpp::shutdown();
-    return 0;
-}
 void MujocoSimulator::setButton(int btn, int act) {
   button_[btn] = (act == GLFW_PRESS);
   glfwGetCursorPos(window_, &last_mx_, &last_my_);
@@ -289,4 +278,16 @@ void MujocoSimulator::mouseMove(double x, double y) {
             button_[GLFW_MOUSE_BUTTON_MIDDLE] ? mjMOUSE_ZOOM :
             mjMOUSE_MOVE_V;
   mjv_moveCamera(m_, act, dx*0.005, dy*0.005, &scn_, &cam_);
+}
+
+int main(int argc, char **argv)
+{
+    rclcpp::init(argc, argv);
+    auto node = std::make_shared<MujocoSimulator>();
+
+    // Blocking render loop on main thread (GL context stays here)
+    rclcpp::spin(node);
+
+    rclcpp::shutdown();
+    return 0;
 }

@@ -112,6 +112,7 @@ class MujocoSimulator(Node):
 
 
 def main():
+    
     rclpy.init()
     node = MujocoSimulator()
     sim_thread = threading.Thread(target=node.simulation_loop, daemon=True)
