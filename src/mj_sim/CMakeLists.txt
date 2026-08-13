@@ -31,6 +31,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
 include_directories(include)
 
 add_library(xbox_controller SHARED src/xbox_controller.cpp)
+add_library(ik_solver SHARED src/ik_solver.cpp)
 add_executable(mujoco_simulator src/mujoco_simulator.cpp)
 add_executable(robot_ctrl src/robot_ctrl.cpp)
 
@@ -54,27 +55,33 @@ ament_target_dependencies(robot_ctrl
   rclcpp
   sensor_msgs
   std_msgs
+  ament_index_cpp
 )
 
 target_include_directories(mujoco_simulator PRIVATE ${MUJOCO_DIR}/include)
 target_link_directories(mujoco_simulator PRIVATE ${MUJOCO_DIR}/lib)
 target_link_libraries(mujoco_simulator mujoco xbox_controller glfw OpenGL::GL)
-target_link_libraries(robot_ctrl xbox_controller)
+target_link_libraries(robot_ctrl xbox_controller ik_solver)
 target_link_options(robot_ctrl PRIVATE "-Wl,-rpath,\$ORIGIN")
 target_link_options(mujoco_simulator PRIVATE
   "-Wl,-rpath,${MUJOCO_DIR}/lib"
   "-Wl,-rpath,\$ORIGIN"
 )
 
-install(TARGETS xbox_controller mujoco_simulator robot_ctrl
+install(TARGETS xbox_controller ik_solver mujoco_simulator robot_ctrl
   DESTINATION lib/${PROJECT_NAME}
 )
 
-install(PROGRAMS scripts/mujoco_simulator.py
+install(PROGRAMS scripts/mujoco_simulator.py scripts/train_rl.py scripts/rl_inference.py
+  scripts/leg_ik.py scripts/hexapod_cpg.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
 install(DIRECTORY models
+  DESTINATION share/${PROJECT_NAME}
+)
+
+install(DIRECTORY rl_checkpoints rl_logs
   DESTINATION share/${PROJECT_NAME}
 )
 

@@ -13,6 +13,8 @@ XboxController::XboxController(rclcpp::Node* node)
 
   left_stick_  = {0.0f, 0.0f};
   right_stick_ = {0.0f, 0.0f};
+
+  RCLCPP_INFO(node->get_logger(), "Xbox controller ready, waiting for /joy topic...");
 }
 
 void XboxController::joy_callback(const sensor_msgs::msg::Joy::SharedPtr msg)

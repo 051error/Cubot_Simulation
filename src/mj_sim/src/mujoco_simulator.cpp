@@ -223,13 +223,6 @@ void MujocoSimulator::publish_sensor_data()
     msg.leg_torque[i] = d_->qfrc_actuator[i];
   }
 
-  // Wheel joints after leg DOFs
-  int ws = 18;
-  for (int i = 0; i < 4 && (ws + i) < m_->nq; i++) {
-    msg.wheel_pos[i] = d_->qpos[ws + i];
-    msg.wheel_vel[i] = d_->qvel[ws + i];
-  }
-
   // IMU from MP_BODY frame
   int body_id = mj_name2id(m_, mjOBJ_BODY, "MP_BODY");
   if (body_id >= 0) {
