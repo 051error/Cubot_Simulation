@@ -22,6 +22,8 @@ from mj_sim.msg import LowState
 
 
 class MujocoSimulator(Node):
+    BALANCE_DEG = 2.0  # attitude threshold for "balanced" vs "tilted"
+
     def __init__(self):
         super().__init__("mujoco_simulator")
 
@@ -31,6 +33,9 @@ class MujocoSimulator(Node):
 
         self.model = mujoco.MjModel.from_xml_path(scene_path)
         self.data = mujoco.MjData(self.model)
+        self._body_id = mujoco.mj_name2id(
+            self.model, mujoco.mjtObj.mjOBJ_BODY, "MP_BODY"
+        )
 
         # Crouched home pose = the control "zero". The 18 leg joints are plain
         # absolute hinge angles (their `ref` stays at the default 0 — a non-zero
@@ -141,6 +146,27 @@ class MujocoSimulator(Node):
 
         self.low_state_pub.publish(msg)
 
+    def _balance_overlay(self):
+        """Return (text1, text2) showing body attitude and balance status.
+
+        Roll/pitch are recovered from the body quaternion via projected
+        gravity (same convention as the C++ HUD). "BALANCED" when both angles
+        are within ±BALANCE_DEG, otherwise "TILTED".
+        """
+        if self._body_id < 0:
+            return "attitude: n/a", ""
+        qw, qx, qy, qz = self.data.xquat[self._body_id]
+        gx = -2.0 * (qx * qz - qw * qy)
+        gy = -2.0 * (qy * qz + qw * qx)
+        gz = -(1.0 - 2.0 * (qx * qx + qy * qy))
+        roll = np.degrees(np.arctan2(gy, -gz))
+        pitch = np.degrees(np.arctan2(-gx, -gz))
+        level = abs(roll) < self.BALANCE_DEG and abs(pitch) < self.BALANCE_DEG
+        return (
+            f"roll {roll:+.1f} deg  pitch {pitch:+.1f} deg",
+            "BALANCED" if level else "TILTED",
+        )
+
     def simulation_loop(self):
         with mujoco.viewer.launch_passive(
             self.model, self.data, show_left_ui=True, show_right_ui=True
@@ -169,6 +195,14 @@ class MujocoSimulator(Node):
                 last_ctrl.data = self.data.ctrl
                 self.last_ctrl_pub.publish(last_ctrl)
                 mujoco.mj_step(self.model, self.data)
+
+                # Balance overlay: attitude + balanced/tilted status (in-viewer).
+                text1, text2 = self._balance_overlay()
+                viewer.set_texts((
+                    mujoco.mjtFontScale.mjFONTSCALE_150,
+                    mujoco.mjtGridPos.mjGRID_TOPLEFT,
+                    text1, text2,
+                ))
                 viewer.sync()
                 elapsed = time.time() - step_start
                 if elapsed < 0.005:

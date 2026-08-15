@@ -25,9 +25,12 @@ void XboxController::joy_callback(const sensor_msgs::msg::Joy::SharedPtr msg)
     right_stick_ = {msg->axes[3], msg->axes[4]};
   }
   buttons_ = msg->buttons;
-  is_pressed_ = (msg->buttons.size() >= 6) &&
-                (msg->buttons[4] == 1 && msg->buttons[5] == 1);
-  
+  // Track shoulder buttons individually so the controller can distinguish
+  // "RB only" (TURN mode) from "LB+RB" (RL mode).
+  lb_ = (msg->buttons.size() > 4) ? (msg->buttons[4] == 1) : false;
+  rb_ = (msg->buttons.size() > 5) ? (msg->buttons[5] == 1) : false;
+  is_pressed_ = lb_ && rb_;
+
   if (is_pressed_) {
     policy_mode = 1;  // RL
   } else {
@@ -43,7 +46,8 @@ void XboxController::joy_callback(const sensor_msgs::msg::Joy::SharedPtr msg)
   // Convert stick values to velocity commands
   // Left stick Y (axes[1]) → forward speed
   // Left stick X (axes[0]) → lateral speed
-  // Right stick X (axes[2]) → angular speed
+  // Right stick X (axes[3]) → angular speed (turn). Only left/right push is
+  // read; right stick Y (axes[4], up/down) is intentionally ignored.
   linear_x_  = msg->axes[1] * kMaxLinearSpeed;
   linear_y_  = msg->axes[0] * kMaxLinearSpeed;
   angular_z_ = msg->axes[3] * kMaxAngularSpeed;  // right stick X → rotation

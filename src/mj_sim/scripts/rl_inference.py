@@ -97,7 +97,9 @@ class RLPolicyNode(Node):
         self.get_logger().info("CPG+RL policy ready. Sub: /mujoco/low_state + /upper_ctrl")
 
     def cmd_callback(self, msg: UpCmd):
-        self.cmd = np.array([msg.linear_x, msg.linear_y, msg.angular_z], dtype=np.float32)
+        # RL handles only the left stick (linear_x/y). Rotation is delegated to
+        # the dedicated TURN mode, so the right stick (angular_z) is ignored here.
+        self.cmd = np.array([msg.linear_x, msg.linear_y, 0.0], dtype=np.float32)
 
     def state_callback(self, msg: LowState):
         # low_state is published at 200Hz but the CPG/policy run at 50Hz.

@@ -141,11 +141,12 @@ class HexapodEnv(gym.Env):
     def _sample_cmd(self):
         sign = lambda: 1 if np.random.random() < 0.5 else -1
         # Command range aligned with the halved /upper_ctrl limits:
-        # linear ±0.05 m/s, angular ±1.0 rad/s.
+        # linear ±0.05 m/s. No angular command — rotation is delegated to the
+        # dedicated TURN mode, so the yaw command is always zero.
         self.cmd = np.array([
             np.random.uniform(0.02, 0.05) * sign(), # vx: bidirectional [2, 5] cm/s
             np.random.uniform(0.02, 0.05) * sign(), # vy: bidirectional [2, 5] cm/s
-            np.random.uniform(0.2, 1.0) * sign(),   # wz: bidirectional [0.2, 1.0] rad/s
+            0.0,                                    # wz: rotation handled by TURN mode
         ])
 
     def reset(self, seed=None, options=None):
@@ -325,9 +326,10 @@ class HexapodEnv(gym.Env):
         else:
             r_forward = 0.0
 
-        # 2. Angular velocity tracking  (paper: +1dt)
-        err_wz_sq = (body_ang[2] - cmd_wz)**2
-        sigma_sq_ang = max(cmd_wz**2 * 0.5, 0.05)
+        # 2. Yaw suppression (cmd_wz is always 0 — rotation is TURN mode's job,
+        #    so this term only penalizes unwanted yaw drift).
+        err_wz_sq = body_ang[2]**2
+        sigma_sq_ang = 0.05
         r_ang_vel = np.exp(-err_wz_sq / sigma_sq_ang) * 1.0
 
         # 3. Linear velocity Z penalty  (paper: −1dt)
@@ -370,7 +372,7 @@ class HexapodEnv(gym.Env):
         # 11. Feet air time  (paper: +1dt)
         r_feet_air = 0.0
         cmd_mag = abs(cmd_vx) + abs(cmd_vy) + abs(cmd_wz)
-        if cmd_mag > 0.1:
+        if cmd_mag > 0.02:   # always true: vx,vy sampled in [0.02, 0.05]
             for i, fid in enumerate(self.foot_ids):
                 if fid >= 0:
                     tibia_rot = d.xmat[fid].reshape(3, 3)

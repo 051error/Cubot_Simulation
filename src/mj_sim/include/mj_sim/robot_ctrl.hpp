@@ -7,6 +7,7 @@
 #include <memory>
 #include <string>
 #include <array>
+#include <vector>
 #include <cmath>
 
 
@@ -28,6 +29,8 @@ public:
   float get_linear_y()  const { return linear_y_; }
   float get_angular_z() const { return angular_z_; }
   bool  get_button_y()  const { return ac_y; }
+  bool  get_button_lb() const { return lb_; }   // left shoulder
+  bool  get_button_rb() const { return rb_; }   // right shoulder
   int   get_policy_mode() const { return policy_mode; }
 
 private:
@@ -39,6 +42,7 @@ private:
   std::vector<int> buttons_;
   bool is_pressed_ = false;
   bool ac_a = false, ac_b = false, ac_x = false, ac_y = false;
+  bool lb_ = false, rb_ = false;   // LB=buttons[4], RB=buttons[5]
   float linear_x_ = 0, linear_y_ = 0, angular_z_ = 0;
   int   policy_mode = 0;
 
@@ -63,6 +67,11 @@ struct GaitGenerator {
   /// Phase signal for leg i: >0 = stance, <0 = swing
   virtual double phase(int i) const = 0;
 
+  /// Quadrature signal for leg i, normalized to [-1,1]. Orthogonal to phase():
+  /// it sweeps monotonically through stance and reverses through swing, which
+  /// is the waveform needed for unidirectional (ratchet) in-place turning.
+  virtual double orthogonal(int i) const = 0;
+
   /// Human-readable name
   virtual const char* name() const = 0;
 };
@@ -83,6 +92,7 @@ struct TripodGait : GaitGenerator {
 
   void step(double omega, double rot_bias) override;
   double phase(int i) const override { return x[i]; }
+  double orthogonal(int i) const override { return y[i] / std::sqrt(MU); }
   const char* name() const override { return "Tripod"; }
 };
 
@@ -120,6 +130,7 @@ public:
 private:
   void timer_callback();
   void rl_action_callback(const std_msgs::msg::Float64MultiArray::SharedPtr msg);
+  void turn_step(std::vector<double>& joint_cmd, double wz);
 
   rclcpp::Publisher<std_msgs::msg::Float64MultiArray>::SharedPtr low_cmd_pub_;
   rclcpp::Subscription<std_msgs::msg::Float64MultiArray>::SharedPtr rl_action_sub_;
@@ -129,7 +140,14 @@ private:
   FootTrajectory traj_;
   int step_count_ = 0;
 
+  // ── Locomotion mode state machine ────────────────────────────────────
+  //   NORMAL  joystick-driven CPG walking
+  //   RL      policy drives all 18 leg joints (LB+RB held)
+  //   TURN    fixed-param CPG in-place rotation (RB only held)
+  enum class Mode { NORMAL, RL, TURN };
+  Mode mode_ = Mode::NORMAL;
+  Mode mode_prev_ = Mode::NORMAL;
+
   bool rl_active_ = false;       // received at least one /rl_action message
-  bool rl_mode_prev_ = false;    // previous RL-mode state, for edge-triggered logging
   std::array<double, 18> rl_action_ = {};
 };

@@ -90,6 +90,16 @@ static const double JOINT_REF[18] = {
 };
 static constexpr double CTRL_SCALE = 0.6;  // ±0.6 rad (±34°) around the crouch
 
+// ── Turn-mode fixed CPG parameters (in-place rotation, no RL) ────────────
+// The coxa swings a FIXED angle; the turn angular velocity is set by the
+// cadence, so the gait frequency scales with |wz| (fixed angle × cadence).
+static constexpr double TURN_AMP         = 0.25;             // fixed coxa swing angle (rad)
+static constexpr double TURN_LIFT        = 0.20;             // swing foot lift height (rad, raised-cosine peak)
+static constexpr double TURN_STANCE_COMP = 0.03;             // stance press-down (rad) to hold body height
+static constexpr double TURN_OMEGA_MIN   = 2.0 * M_PI * 0.8; // min cadence (0.8 Hz) — keep slow turns from stalling
+static constexpr double TURN_OMEGA_MAX   = 2.0 * M_PI * 1.4; // max cadence (1.4 Hz)
+static constexpr double TURN_DEADZONE    = 0.05;             // right-stick deadzone
+
 RobotController::RobotController() : Node("robot_controller"),
     gait_(std::make_unique<TripodGait>())
 {
@@ -133,58 +143,145 @@ void RobotController::timer_callback()
   double speed = std::sqrt(vx * vx + vy * vy);
   bool idle = (speed < 0.01 && std::abs(wz) < 0.01);
 
-  // Policy mode: LB+RB held = RL (shoulder buttons). Read via XboxController
-  // so the mode is driven by the same source that publishes /upper_ctrl.
-  bool rl_mode = (xbox && xbox->get_policy_mode() == 1);
+  // ── Locomotion mode state machine: NORMAL / RL / TURN ───────────────
+  //   LB+RB held → RL   (policy drives all 18 leg joints)
+  //   RB only    → TURN (fixed-param CPG, in-place rotation)
+  //   otherwise  → NORMAL (joystick-driven CPG walking)
+  Mode mode = Mode::NORMAL;
+  if (xbox) {
+    bool lb = xbox->get_button_lb();
+    bool rb = xbox->get_button_rb();
+    if (lb && rb)      mode = Mode::RL;
+    else if (rb)       mode = Mode::TURN;
+  }
 
-  // Log RL-mode transitions (enable/disable)
-  if (rl_mode != rl_mode_prev_) {
-    rl_mode_prev_ = rl_mode;
-    RCLCPP_INFO(this->get_logger(), rl_mode
-        ? "RL mode ENABLED (LB+RB held)"
-        : "RL mode DISABLED (shoulder buttons released)");
+  // Edge-triggered mode-switch log.
+  if (mode != mode_prev_) {
+    const char* mname = (mode == Mode::RL) ? "RL" : (mode == Mode::TURN) ? "TURN" : "NORMAL";
+    RCLCPP_INFO(this->get_logger(), "Mode: %s", mname);
+    mode_prev_ = mode;
   }
 
   // RL control only valid when the mode is on AND policy output is flowing.
-  bool use_rl = (rl_mode && rl_active_);
+  bool use_rl = (mode == Mode::RL && rl_active_);
 
-  if (idle && !use_rl) {
-    gait_->step(0.0, 0.0);
-    // Zero-ctrl home stance (u=0 → crouch). Absolute target = JOINT_REF.
-    std::copy_n(JOINT_REF, 18, cmd.data.begin());
-  } else if (use_rl) {
-    // RL mode: 18 leg joints from policy, lid stays Y-button.
-    // Keep using the latest rl_action_ (rl_inference re-publishes continuously).
-    std::copy_n(rl_action_.begin(), 18, cmd.data.begin());
-  } else {
-    // CPG fallback — also used when RL mode is on but no policy output yet.
-    double omega = 2.0 * M_PI * speed / 0.15 + 4.0;
-    gait_->step(omega, wz * 0.5);
+  switch (mode) {
+    case Mode::RL:
+      if (use_rl) {
+        // RL mode: 18 leg joints from policy, lid stays Y-button.
+        std::copy_n(rl_action_.begin(), 18, cmd.data.begin());
+      } else {
+        // RL requested but no policy output yet → hold crouch.
+        gait_->step(0.0, 0.0);
+        std::copy_n(JOINT_REF, 18, cmd.data.begin());
+      }
+      break;
 
-    double amp = std::min(speed / 0.3, 1.0) * 0.4;
-    for (int leg = 0; leg < 6; ++leg) {
-      double ph = gait_->phase(leg);
-      int j = leg * 3;
-      // Oscillate around the crouched reference, not around fully-extended 0.
-      cmd.data[j + 0] = JOINT_REF[j + 0] + amp * std::sin(ph * M_PI);
-      cmd.data[j + 1] = JOINT_REF[j + 1] + ((ph > 0) ? 0.0 : amp * 0.5 * (1.0 + std::cos(ph * M_PI)));
-      cmd.data[j + 2] = JOINT_REF[j + 2] + ((ph > 0) ? -amp * 0.3 * ph : amp * 0.3 * ph);
-    }
+    case Mode::TURN:
+      // Independent CPG for in-place rotation (no RL).
+      turn_step(cmd.data, wz);
+      break;
+
+    case Mode::NORMAL:
+    default:
+      if (idle) {
+        gait_->step(0.0, 0.0);
+        // Zero-ctrl home stance (u=0 → crouch). Absolute target = JOINT_REF.
+        std::copy_n(JOINT_REF, 18, cmd.data.begin());
+      } else {
+        // Joystick-driven forward/lateral walking (also the pre-RL fallback).
+        double omega = 2.0 * M_PI * speed / 0.15 + 4.0;
+        gait_->step(omega, wz * 0.5);
+
+        double amp = std::min(speed / 0.3, 1.0) * 0.4;
+        for (int leg = 0; leg < 6; ++leg) {
+          double ph = gait_->phase(leg);
+          int j = leg * 3;
+          // Oscillate around the crouched reference, not around fully-extended 0.
+          cmd.data[j + 0] = JOINT_REF[j + 0] + amp * std::sin(ph * M_PI);
+          cmd.data[j + 1] = JOINT_REF[j + 1] + ((ph > 0) ? 0.0 : amp * 0.5 * (1.0 + std::cos(ph * M_PI)));
+          cmd.data[j + 2] = JOINT_REF[j + 2] + ((ph > 0) ? -amp * 0.3 * ph : amp * 0.3 * ph);
+        }
+      }
+      break;
   }
   cmd.data[18] = (xbox && xbox->get_button_y()) ? 0.08 : 0.0;
   low_cmd_pub_->publish(cmd);
 
   // Warn if RL mode requested but no /rl_action is arriving.
-  if (rl_mode && !rl_active_) {
+  if (mode == Mode::RL && !rl_active_) {
     RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
         "RL mode requested but no /rl_action received — is rl_inference.py running?");
   }
 
   if (++step_count_ % 200 == 0 && !idle) {
-    const char* mode = rl_mode ? "RL" : "CPG";
+    const char* mname = (mode == Mode::RL) ? "RL" : (mode == Mode::TURN) ? "TURN" : "NORMAL";
     RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
-        "%s[%s] v=%.2f amp=%.2f",
-        gait_->name(), mode, speed, std::min(speed / 0.3, 1.0) * 0.4);
+        "%s[%s] v=%.2f wz=%.2f",
+        gait_->name(), mname, speed, wz);
+  }
+}
+
+// ─── Turn mode: independent CPG for in-place rotation ────────────────────
+// No RL — fixed gait parameters rotate the body in place. The tripod CPG
+// alternates stance/swing groups; stance and swing rotate the coxa in OPPOSITE
+// directions. The coxa is a yaw joint, so a planted stance foot that sweeps its
+// coxa pushes the body around yaw; the lifted swing foot sweeps the coxa back
+// toward neutral so the coxa angle resets each cycle. Using the QUADRATURE
+// component y (not phase x) makes the coxa sweep unidirectionally through
+// stance and reverse through swing — a ratchet, not a back-and-forth (which
+// produces zero net yaw, the failure of the previous front/rear version).
+//
+// Tripod groups {0,2,4} and {1,3,5} are π apart, so this automatically yields
+// the requested pattern — e.g. for a left turn, {0,2,4} (stance) rotate the
+// coxa one way while {1,3,5} (swing) rotate it the other way — and the signs
+// reverse on the next half-cycle.
+void RobotController::turn_step(std::vector<double>& joint_cmd, double wz)
+{
+  if (std::abs(wz) < TURN_DEADZONE) {
+    // Stick centred → hold the crouch.
+    gait_->step(0.0, 0.0);
+    std::copy_n(JOINT_REF, 18, joint_cmd.begin());
+    return;
+  }
+
+  // Right stick X (wz): sign → turn direction, magnitude → turn angular rate.
+  // Fixed coxa angle × cadence = angular velocity, so |wz| scales the cadence.
+  // Stick left (wz<0) → turn left; stick right (wz>0) → turn right.
+  double dir   = (wz >= 0.0) ? +1.0 : -1.0;
+  double mag   = std::min(std::abs(wz), 1.0);
+  double omega = TURN_OMEGA_MIN + (TURN_OMEGA_MAX - TURN_OMEGA_MIN) * mag;
+  gait_->step(omega, 0.0);
+
+  for (int leg = 0; leg < 6; ++leg) {
+    int j = leg * 3;
+    // Quadrature y ∈ [-1,1]: monotonic through stance, reversed through swing,
+    // so coxa pushes the body on the ground and resets toward neutral in air.
+    double yy = gait_->orthogonal(leg);
+    joint_cmd[j + 0] = JOINT_REF[j + 0] + dir * TURN_AMP * yy;
+    // Phase normalized to [-1,1] (raw x lives on the ±√MU limit cycle, not
+    // ±1). Raised-cosine lift: height is 0 at liftoff/touchdown AND its slope is
+    // 0 there too, so the foot lands with ~zero vertical velocity. (The
+    // half-sine it replaces hit the ground at MAXIMUM downward speed — that was
+    // the impact spike.)
+    double ph_n = gait_->phase(leg) / std::sqrt(TripodGait::MU);
+    double lift = 0.0;
+    if (ph_n < 0.0) {
+      double s = (1.0 + ph_n) / 2.0;   // 0 (swing start) → 1 (swing end)
+      lift = TURN_LIFT * 0.5 * (1.0 - std::cos(2.0 * M_PI * s));
+    }
+    // Stance height compensation: while the other tripod is lifted, press the
+    // planted foot down (thigh more negative) through a smooth arch so the body
+    // does not sink/recoil as weight shifts onto three feet. Flip the sign if
+    // the body bounces UP instead of sinking.
+    double comp = 0.0;
+    if (ph_n > 0.0) {
+      comp = -TURN_STANCE_COMP * std::sin(M_PI * ph_n);
+    }
+    joint_cmd[j + 1] = JOINT_REF[j + 1] + lift + comp;
+    // Tibia held at the crouch reference: a single-joint lift keeps touchdown
+    // smooth. Re-add a small tuck here only if the toe needs extra clearance.
+    joint_cmd[j + 2] = JOINT_REF[j + 2];
   }
 }
 
