@@ -150,4 +150,5 @@ private:
 
   bool rl_active_ = false;       // received at least one /rl_action message
   std::array<double, 18> rl_action_ = {};
+  double wz_filt_ = 0.0;         // low-passed turn command (turn_step smoothing)
 };

@@ -189,24 +189,24 @@
   </keyframe>
 
   <actuator>
-    <position name="a_j_c1_rf" joint="j_c1_rf" kp="50.0" kv="0.3"/>
-    <position name="a_j_thigh_rf" joint="j_thigh_rf" kp="50.0" kv="0.3"/>
-    <position name="a_j_tibia_rf" joint="j_tibia_rf" kp="50.0" kv="0.3"/>
-    <position name="a_j_c1_rm" joint="j_c1_rm" kp="50.0" kv="0.3"/>
-    <position name="a_j_thigh_rm" joint="j_thigh_rm" kp="50.0" kv="0.3"/>
-    <position name="a_j_tibia_rm" joint="j_tibia_rm" kp="50.0" kv="0.3"/>
-    <position name="a_j_c1_rr" joint="j_c1_rr" kp="50.0" kv="0.3"/>
-    <position name="a_j_thigh_rr" joint="j_thigh_rr" kp="50.0" kv="0.3"/>
-    <position name="a_j_tibia_rr" joint="j_tibia_rr" kp="50.0" kv="0.3"/>
-    <position name="a_j_c1_lf" joint="j_c1_lf" kp="50.0" kv="0.3"/>
-    <position name="a_j_thigh_lf" joint="j_thigh_lf" kp="50.0" kv="0.3"/>
-    <position name="a_j_tibia_lf" joint="j_tibia_lf" kp="50.0" kv="0.3"/>
-    <position name="a_j_c1_lm" joint="j_c1_lm" kp="50.0" kv="0.3"/>
-    <position name="a_j_thigh_lm" joint="j_thigh_lm" kp="50.0" kv="0.3"/>
-    <position name="a_j_tibia_lm" joint="j_tibia_lm" kp="50.0" kv="0.3"/>
-    <position name="a_j_c1_lr" joint="j_c1_lr" kp="50.0" kv="0.3"/>
-    <position name="a_j_thigh_lr" joint="j_thigh_lr" kp="50.0" kv="0.3"/>
-    <position name="a_j_tibia_lr" joint="j_tibia_lr" kp="50.0" kv="0.3"/>
+    <position name="a_j_c1_rf" joint="j_c1_rf" kp="20.0" kv="0.3"/>
+    <position name="a_j_thigh_rf" joint="j_thigh_rf" kp="20.0" kv="0.3"/>
+    <position name="a_j_tibia_rf" joint="j_tibia_rf" kp="20.0" kv="0.3"/>
+    <position name="a_j_c1_rm" joint="j_c1_rm" kp="20.0" kv="0.3"/>
+    <position name="a_j_thigh_rm" joint="j_thigh_rm" kp="20.0" kv="0.3"/>
+    <position name="a_j_tibia_rm" joint="j_tibia_rm" kp="20.0" kv="0.3"/>
+    <position name="a_j_c1_rr" joint="j_c1_rr" kp="20.0" kv="0.3"/>
+    <position name="a_j_thigh_rr" joint="j_thigh_rr" kp="20.0" kv="0.3"/>
+    <position name="a_j_tibia_rr" joint="j_tibia_rr" kp="20.0" kv="0.3"/>
+    <position name="a_j_c1_lf" joint="j_c1_lf" kp="20.0" kv="0.3"/>
+    <position name="a_j_thigh_lf" joint="j_thigh_lf" kp="20.0" kv="0.3"/>
+    <position name="a_j_tibia_lf" joint="j_tibia_lf" kp="20.0" kv="0.3"/>
+    <position name="a_j_c1_lm" joint="j_c1_lm" kp="20.0" kv="0.3"/>
+    <position name="a_j_thigh_lm" joint="j_thigh_lm" kp="20.0" kv="0.3"/>
+    <position name="a_j_tibia_lm" joint="j_tibia_lm" kp="20.0" kv="0.3"/>
+    <position name="a_j_c1_lr" joint="j_c1_lr" kp="20.0" kv="0.3"/>
+    <position name="a_j_thigh_lr" joint="j_thigh_lr" kp="20.0" kv="0.3"/>
+    <position name="a_j_tibia_lr" joint="j_tibia_lr" kp="20.0" kv="0.3"/>
     <position name="a_j_lid_front" joint="j_lid_front" kp="15.0" kv="1.0" ctrlrange="0 0.08"/>
   </actuator>
 </mujoco>

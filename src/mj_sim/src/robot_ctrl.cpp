@@ -95,10 +95,12 @@ static constexpr double CTRL_SCALE = 0.6;  // ±0.6 rad (±34°) around the crou
 // cadence, so the gait frequency scales with |wz| (fixed angle × cadence).
 static constexpr double TURN_AMP         = 0.25;             // fixed coxa swing angle (rad)
 static constexpr double TURN_LIFT        = 0.20;             // swing foot lift height (rad, raised-cosine peak)
-static constexpr double TURN_STANCE_COMP = 0.03;             // stance press-down (rad) to hold body height
+static constexpr double TIBIA_TUCK       = 0.15;             // swing-phase tibia fold (rad) for extra ground clearance
 static constexpr double TURN_OMEGA_MIN   = 2.0 * M_PI * 0.8; // min cadence (0.8 Hz) — keep slow turns from stalling
 static constexpr double TURN_OMEGA_MAX   = 2.0 * M_PI * 1.4; // max cadence (1.4 Hz)
 static constexpr double TURN_DEADZONE    = 0.05;             // right-stick deadzone
+static constexpr double TURN_SMOOTH_ALPHA= 0.06;             // first-order low-pass gain on wz (@200 Hz, ~80 ms)
+static constexpr double TURN_DIR_SMOOTH  = 0.10;             // coxa direction ramp width through zero
 
 RobotController::RobotController() : Node("robot_controller"),
     gait_(std::make_unique<TripodGait>())
@@ -238,7 +240,12 @@ void RobotController::timer_callback()
 // reverse on the next half-cycle.
 void RobotController::turn_step(std::vector<double>& joint_cmd, double wz)
 {
-  if (std::abs(wz) < TURN_DEADZONE) {
+  // Low-pass the stick so start/stop and speed changes ramp instead of jump.
+  wz_filt_ += TURN_SMOOTH_ALPHA * (wz - wz_filt_);
+  double wf = wz_filt_;
+  double m  = std::abs(wf);
+
+  if (m <= TURN_DEADZONE) {
     // Stick centred → hold the crouch.
     gait_->step(0.0, 0.0);
     std::copy_n(JOINT_REF, 18, joint_cmd.begin());
@@ -246,42 +253,43 @@ void RobotController::turn_step(std::vector<double>& joint_cmd, double wz)
   }
 
   // Right stick X (wz): sign → turn direction, magnitude → turn angular rate.
-  // Fixed coxa angle × cadence = angular velocity, so |wz| scales the cadence.
-  // Stick left (wz<0) → turn left; stick right (wz>0) → turn right.
-  double dir   = (wz >= 0.0) ? +1.0 : -1.0;
-  double mag   = std::min(std::abs(wz), 1.0);
+  // Fixed coxa angle × cadence = angular velocity, so |wf| scales the cadence.
+  // Stick left (wf<0) → turn left; stick right (wf>0) → turn right.
+  double mag   = std::min(m, 1.0);
   double omega = TURN_OMEGA_MIN + (TURN_OMEGA_MAX - TURN_OMEGA_MIN) * mag;
   gait_->step(omega, 0.0);
+
+  // Signed, full-amplitude coxa coefficient: ±1 away from zero, ramping
+  // linearly through zero so direction changes don't snap.
+  double k = wf / std::max(m, TURN_DIR_SMOOTH);
 
   for (int leg = 0; leg < 6; ++leg) {
     int j = leg * 3;
     // Quadrature y ∈ [-1,1]: monotonic through stance, reversed through swing,
     // so coxa pushes the body on the ground and resets toward neutral in air.
     double yy = gait_->orthogonal(leg);
-    joint_cmd[j + 0] = JOINT_REF[j + 0] + dir * TURN_AMP * yy;
-    // Phase normalized to [-1,1] (raw x lives on the ±√MU limit cycle, not
-    // ±1). Raised-cosine lift: height is 0 at liftoff/touchdown AND its slope is
-    // 0 there too, so the foot lands with ~zero vertical velocity. (The
-    // half-sine it replaces hit the ground at MAXIMUM downward speed — that was
-    // the impact spike.)
+    // Minus sign flips the coxa sweep so a rightward stick (k>0) turns the
+    // body right.
+    joint_cmd[j + 0] = JOINT_REF[j + 0] - k * TURN_AMP * yy;
+
+    // Phase normalized to [-1,1] (raw x lives on the ±√MU limit cycle, not ±1).
     double ph_n = gait_->phase(leg) / std::sqrt(TripodGait::MU);
+
+    // Swing: LIFT the foot. Verified against MuJoCo forward kinematics: the
+    // foot tip rises when the thigh goes MORE NEGATIVE (rearward swing) and
+    // when the tibia goes MORE POSITIVE (straighten). Raised-cosine envelope
+    // keeps value AND slope zero at liftoff/touchdown (no impact spike).
     double lift = 0.0;
+    double tuck = 0.0;
     if (ph_n < 0.0) {
-      double s = (1.0 + ph_n) / 2.0;   // 0 (swing start) → 1 (swing end)
-      lift = TURN_LIFT * 0.5 * (1.0 - std::cos(2.0 * M_PI * s));
+      double s = -ph_n / 2.0;            // 0 (swing start/end) → 0.5 (swing middle)
+      double env = 0.5 * (1.0 - std::cos(2.0 * M_PI * s));
+      lift = -TURN_LIFT * env;    // thigh more negative → foot tip up
+      tuck = +TIBIA_TUCK * env;   // tibia more positive → foot tip up & back
     }
-    // Stance height compensation: while the other tripod is lifted, press the
-    // planted foot down (thigh more negative) through a smooth arch so the body
-    // does not sink/recoil as weight shifts onto three feet. Flip the sign if
-    // the body bounces UP instead of sinking.
-    double comp = 0.0;
-    if (ph_n > 0.0) {
-      comp = -TURN_STANCE_COMP * std::sin(M_PI * ph_n);
-    }
-    joint_cmd[j + 1] = JOINT_REF[j + 1] + lift + comp;
-    // Tibia held at the crouch reference: a single-joint lift keeps touchdown
-    // smooth. Re-add a small tuck here only if the toe needs extra clearance.
-    joint_cmd[j + 2] = JOINT_REF[j + 2];
+
+    joint_cmd[j + 1] = JOINT_REF[j + 1] + lift;
+    joint_cmd[j + 2] = JOINT_REF[j + 2] + tuck;
   }
 }
 
