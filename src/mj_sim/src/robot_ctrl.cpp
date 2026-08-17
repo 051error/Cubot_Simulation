@@ -45,41 +45,103 @@ void TripodGait::step(double omega, double rot_bias)
   }
 }
 
-// ─── FootTrajectory ─────────────────────────────────────────────────────
+// ─── Per-leg mounting geometry (body frame) ──────────────────────────────
+// Calibrated via MuJoCo FK: coxa (c1) origins and the c1 +Y axis direction in
+// the body frame (body X=forward, Y=left, Z=up). Leg order: rf, rm, rr, lf,
+// lm, lr. c1 +X is always body +Z (vertical); c1 +Z = c1_X × c1_Y is derived
+// from these two, so only the horizontal Y axis is stored.
+static const LegGeometry LEG_GEOM[6] = {
+    // coxa_x    coxa_y    coxa_z    c1_y_x     c1_y_y
+    { 0.1248,  -0.06164,  0.001116, -0.707107,  0.707107 },  // rf
+    { 0.0,     -0.1034,   0.001116,  0.0,       1.0      },  // rm
+    {-0.1248,  -0.06164,  0.001116,  0.707107,  0.707107 },  // rr
+    { 0.1248,   0.06164,  0.001116, -0.707107, -0.707107 },  // lf
+    { 0.0,      0.1034,   0.001116,  0.0,      -1.0      },  // lm
+    {-0.1248,   0.06164,  0.001116,  0.707107, -0.707107 },  // lr
+};
 
-void FootTrajectory::compute(int leg, double phase_i,
-                              double vx, double vy, double rot,
+// Nominal foot position (body frame) at the crouch pose — the foot targets
+// IK solves back to exactly JOINT_REF when the robot is standing still.
+static const double NOMINAL_FOOT[6][3] = {
+    { 0.2289, -0.1679, -0.1238 },  // rf
+    {-0.0016, -0.2522, -0.1238 },  // rm
+    {-0.2311, -0.1657, -0.1238 },  // rr
+    { 0.2311,  0.1657, -0.1238 },  // lf
+    { 0.0016,  0.2522, -0.1238 },  // lm
+    {-0.2289,  0.1679, -0.1238 },  // lr
+};
+
+// ─── FootTrajectory ─────────────────────────────────────────────────────
+// CPG phase → foot target in the body frame (X=forward, Y=left, Z=up).
+// The foot sweeps along an arc centred on the coxa axis (radial distance fixed
+// at nominal) so the coxa, not the thigh/tibia, drives horizontal motion.
+// Fore/aft (vx) swings the coxa; lateral (vy) shifts the radius. The sweep is
+// driven by the ORTHOGONAL (sin) component — monotonic through stance (-1→+1),
+// reversed through swing — which is the ratchet waveform; the PHASE (cos)
+// component only selects stance/swing and shapes the lift envelope.
+
+void FootTrajectory::compute(int leg, double phase, double orthogonal,
+                              double vx, double vy,
                               double& fx, double& fy, double& fz)
 {
-  double y_sign = (leg >= 3) ? 1.0 : -1.0;
-  double stride = STRIDE * std::min(std::abs(vx) / 0.3 + 0.2, 1.0);
+  const double* nom = NOMINAL_FOOT[leg];
+  const LegGeometry& g = LEG_GEOM[leg];
 
-  fx = 0.0;
-  fy = y_sign * Y_OFFSET;
-  fz = Z_OFFSET;
+  // Nominal foot vector from the coxa axis (horizontal, body frame).
+  const double vxn = nom[0] - g.coxa_x;
+  const double vyn = nom[1] - g.coxa_y;
+  const double r_nom = std::hypot(vxn, vyn);
+  const double phi   = std::atan2(vyn, vxn);
 
-  if (phase_i > 0.0) {
-    // stance — push backward
-    double s = (1.0 - phase_i) / 2.0;
-    fx += stride * (1.0 - 2.0 * s);
-  } else {
-    // swing — lift + move forward
-    double s = (1.0 + phase_i) / 2.0;
-    fx -= stride * (1.0 - 2.0 * s);
-    fz += LIFT * std::sin(M_PI * s);
+  const double speed = std::hypot(vx, vy);
+
+  // phase()/orthogonal() already return x/r, y/r ∈ [-1, 1]; guard the bounds.
+  const double ph = std::clamp(phase, -1.0, 1.0);       // stance >0, swing <0
+  const double yy = std::clamp(orthogonal, -1.0, 1.0);  // monotonic sweep
+
+  double theta = 0.0;   // coxa swing angle (fore/aft)
+  double dr    = 0.0;   // radial shift (lateral)
+  if (speed > 1e-6) {
+    const double g = std::min(speed / SPEED_REF, 1.0);
+
+    // sin(phi) is both the tangent's X component and the radial's Y component
+    // in the body frame; it signs the per-leg sweep direction so left/right
+    // feet mirror (lateral cancels, fore/aft adds).
+    const double sp = std::sin(phi);
+
+    // Fore/aft: swing the coxa so the planted foot pushes opposite to vx.
+    // theta sweeps -A→+A through stance (orthogonal -1→+1); the sign s_x makes
+    // the resulting tangent displacement point opposite vx.
+    const double A   = SWING_AMP * (std::abs(vx) / speed) * g;
+    const double s_x = (vx > 0.0 ? 1.0 : -1.0) * (sp > 0.0 ? 1.0 : -1.0);
+    theta = s_x * A * yy;
+
+    // Lateral: shift the radius so the foot pushes opposite to vy.
+    const double R   = RADIAL * (std::abs(vy) / speed) * g;
+    const double s_y = (vy > 0.0 ? -1.0 : 1.0) * (sp > 0.0 ? 1.0 : -1.0);
+    dr = s_y * R * yy;
   }
 
-  fx += vy * 0.2;        // lateral
-  fx += rot * 0.1;        // rotation
+  // Foot = coxa axis + (r_nom + dr) rotated by theta; height unchanged.
+  const double rr = r_nom + dr;
+  fx = g.coxa_x + rr * std::cos(phi + theta);
+  fy = g.coxa_y + rr * std::sin(phi + theta);
+  fz = nom[2];
+
+  if (ph < 0.0) {
+    // Swing: raised-cosine lift envelope, peak at swing mid (ph = -1). A sine
+    // (sin(π·(-ph))) would instead peak at ph = ±0.5 and drop to ZERO at the
+    // swing midpoint, so the foot would touch down halfway through the swing.
+    fz += LIFT * 0.5 * (1.0 - std::cos(M_PI * ph));
+  }
 }
 
 // ─── RobotController ────────────────────────────────────────────────────
 
-// ─── Normalized joint-control table ─────────────────────────────────────
-// The crouched pose is the control "zero": absolute joint angle (rad) is
-//   q = JOINT_REF[j] + u[j] * CTRL_SCALE,   u[j] ∈ [-1, 1]
-// so u=0 → crouch, u=±1 → ±0.6 rad around it. JOINT_REF holds the crouched
-// qpos (coxa=0, thigh=-0.7593, tibia=-0.7108); the joints' `ref` stays 0.
+// ─── Crouched reference pose ────────────────────────────────────────────
+// Absolute qpos for the standing/crouched stance (coxa=0, thigh=-0.7593,
+// tibia=-0.7108). Used as the idle home and the RL no-policy fallback. The
+// NORMAL mode instead reaches the same pose through IK (nominal foot targets).
 static const double JOINT_REF[18] = {
     0.0, -0.7593, -0.7108,  // rf: coxa, thigh, tibia
     0.0, -0.7593, -0.7108,  // rm
@@ -88,7 +150,6 @@ static const double JOINT_REF[18] = {
     0.0, -0.7593, -0.7108,  // lm
     0.0, -0.7593, -0.7108,  // lr
 };
-static constexpr double CTRL_SCALE = 0.6;  // ±0.6 rad (±34°) around the crouch
 
 // ── Turn-mode fixed CPG parameters (in-place rotation, no RL) ────────────
 // The coxa swings a FIXED angle; the turn angular velocity is set by the
@@ -188,21 +249,46 @@ void RobotController::timer_callback()
     default:
       if (idle) {
         gait_->step(0.0, 0.0);
-        // Zero-ctrl home stance (u=0 → crouch). Absolute target = JOINT_REF.
+        // Zero-ctrl home stance. Absolute target = JOINT_REF (crouch).
         std::copy_n(JOINT_REF, 18, cmd.data.begin());
       } else {
-        // Joystick-driven forward/lateral walking (also the pre-RL fallback).
-        double omega = 2.0 * M_PI * speed / 0.15 + 4.0;
-        gait_->step(omega, wz * 0.5);
+        // ── Joystick-driven CPG walking: CPG → foot target → IK ──────────
+        // Body-frame velocity (m/s). The Xbox stick is positive-left / positive
+        // -back, so negate: push up (axes[1]<0) → forward +X, push left
+        // (axes[0]<0) → left +Y. The right stick (wz) is ignored in NORMAL.
+        double bvx = -vx;   // forward +X
+        double bvy = -vy;   // left    +Y
+        double bspd = std::hypot(bvx, bvy);
 
-        double amp = std::min(speed / 0.3, 1.0) * 0.4;
+        // CPG cadence scales with speed; no rotation bias in NORMAL.
+        double omega = 2.0 * M_PI * bspd / 0.15 + 4.0;
+        gait_->step(omega, 0.0);
+
         for (int leg = 0; leg < 6; ++leg) {
           double ph = gait_->phase(leg);
+          double yy = gait_->orthogonal(leg);
+
+          // 1. CPG phase → foot target in body frame.
+          double fx, fy, fz;
+          traj_.compute(leg, ph, yy, bvx, bvy, fx, fy, fz);
+
+          // 2. Body → coxa frame: subtract coxa origin, then rotate.
+          const LegGeometry& g = LEG_GEOM[leg];
+          double dx = fx - g.coxa_x;
+          double dy = fy - g.coxa_y;
+          double dz = fz - g.coxa_z;
+          // c1 +X = body +Z; c1 +Z = c1_X × c1_Y = (-c1_y_y, c1_y_x, 0).
+          double c1x = dz;
+          double c1y = g.c1_y_x * dx + g.c1_y_y * dy;
+          double c1z = -g.c1_y_y * dx + g.c1_y_x * dy;
+
+          // 3. IK → absolute joint qpos.
+          double ang[3];
+          LegIK::solve(c1x, c1y, c1z, ang);
           int j = leg * 3;
-          // Oscillate around the crouched reference, not around fully-extended 0.
-          cmd.data[j + 0] = JOINT_REF[j + 0] + amp * std::sin(ph * M_PI);
-          cmd.data[j + 1] = JOINT_REF[j + 1] + ((ph > 0) ? 0.0 : amp * 0.5 * (1.0 + std::cos(ph * M_PI)));
-          cmd.data[j + 2] = JOINT_REF[j + 2] + ((ph > 0) ? -amp * 0.3 * ph : amp * 0.3 * ph);
+          cmd.data[j + 0] = ang[0];
+          cmd.data[j + 1] = ang[1];
+          cmd.data[j + 2] = ang[2];
         }
       }
       break;
@@ -272,8 +358,8 @@ void RobotController::turn_step(std::vector<double>& joint_cmd, double wz)
     // body right.
     joint_cmd[j + 0] = JOINT_REF[j + 0] - k * TURN_AMP * yy;
 
-    // Phase normalized to [-1,1] (raw x lives on the ±√MU limit cycle, not ±1).
-    double ph_n = gait_->phase(leg) / std::sqrt(TripodGait::MU);
+    // Phase already normalized to [-1,1] inside phase() (x / actual radius).
+    double ph_n = gait_->phase(leg);
 
     // Swing: LIFT the foot. Verified against MuJoCo forward kinematics: the
     // foot tip rises when the thigh goes MORE NEGATIVE (rearward swing) and

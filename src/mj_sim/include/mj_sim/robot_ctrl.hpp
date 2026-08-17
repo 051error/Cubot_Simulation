@@ -91,24 +91,79 @@ struct TripodGait : GaitGenerator {
   TripodGait();
 
   void step(double omega, double rot_bias) override;
-  double phase(int i) const override { return x[i]; }
-  double orthogonal(int i) const override { return y[i] / std::sqrt(MU); }
+  // Phase signals are normalized by the ACTUAL oscillator radius r=√(x²+y²),
+  // NOT by √MU. The linear inter-leg coupling term adds energy and pushes the
+  // limit cycle radius above √MU (~0.56 instead of 0.245), so normalizing by
+  // √MU would clamp/saturate and cause step jumps. x/r and y/r are the true
+  // phase (cos θ) and quadrature (sin θ) regardless of radius.
+  double phase(int i) const override {
+    double r = std::hypot(x[i], y[i]);
+    return (r > 1e-9) ? x[i] / r : 1.0;
+  }
+  double orthogonal(int i) const override {
+    double r = std::hypot(x[i], y[i]);
+    return (r > 1e-9) ? y[i] / r : 0.0;
+  }
   const char* name() const override { return "Tripod"; }
 };
 
 
 // ═══════════════════════════════════════════════════════════════════════
-//  Foot Trajectory: CPG phase → foot XYZ in coxa frame (gait-agnostic)
+//  Foot Trajectory: CPG phase → foot XYZ in BODY frame (gait-agnostic)
 // ═══════════════════════════════════════════════════════════════════════
+//
+//  Outputs the foot target in the body frame (X=forward, Y=left, Z=up), so
+//  the velocity commands map directly onto body axes.
+//
+//  The foot sweeps along an ARC centred on the coxa axis (radial distance held
+//  at the nominal value) rather than along a body-frame straight line. This is
+//  what makes locomotion coxa-dominant: a planted stance foot sweeps its coxa
+//  sideways against the ground (the same ratchet mechanism as turn mode), while
+//  the thigh/tibia only maintain height + lift. Sweeping a straight line instead
+//  would split the motion between coxa AND thigh/tibia, so the thigh/tibia would
+//  also push radially ("digging") and the body bounces at high command magnitude.
+//
+//  Fore/aft (vx) is produced by the coxa swing angle; lateral (vy) is produced
+//  by a radial shift, because the middle legs' coxa tangent points fore/aft and
+//  physically cannot step sideways — lateral motion must lengthen/shorten the
+//  leg. The two terms are scaled independently by |vx|/speed and |vy|/speed so
+//  a diagonal command blends them without cross-coupling.
+//
+//  Two CPG signals are used, each with a distinct role:
+//   - phase (cos component)  → stance/swing switch (>0 stance, <0 swing) and the
+//     swing LIFT envelope. It is NOT monotonic within a stance (0 → ±1 → 0), so
+//     it must never drive a sweep directly.
+//   - orthogonal (sin component) → the sweep waveform. It IS monotonic within a
+//     stance (-1 → +1) and reverses through swing, which is the unidirectional
+//     (ratchet) waveform the coxa swing needs. Using phase here instead would
+//     make the coxa swing back and forth mid-stance instead of sweeping once.
+//
+//  vx/vy are body-frame velocities in m/s (vx forward+, vy left+).
 
 struct FootTrajectory {
-  static constexpr double STRIDE   = 0.06;
-  static constexpr double LIFT     = 0.03;
-  static constexpr double Y_OFFSET = 0.18;   // extend further outward
-  static constexpr double Z_OFFSET = -0.10;  // less depth below coxa
+  // Amplitude is capped by two constraints, not by desired speed:
+  //  - SWING_AMP too large => the stance foot sweeps an arc far longer than the
+  //    body actually advances (0.149 m arc vs 0.026 m/step at full speed), so the
+  //    foot slips ~80% and the leading legs lose ground contact -> weak drive.
+  //  - RADIAL too large => during swing the foot shortens toward the coxa while
+  //    lifting, driving the 2-link distance below the leg's reachable minimum
+  //    (D=0.092 < d_min=0.097) -> 306 IK-clamped samples/cycle and a 127 deg thigh
+  //    sweep (maxjump 0.32 rad) that makes the body bounce sideways.
+  //  0.36 / 0.04 keep the reachable-margin positive and the thigh sweep to ~92 deg.
+  static constexpr double SWING_AMP = 0.36;   // max coxa swing angle (rad) for fore/aft
+  static constexpr double RADIAL    = 0.04;   // max radial shift (m) for lateral
+  static constexpr double LIFT      = 0.06;   // swing lift height (m)
+  static constexpr double SPEED_REF = 0.05;   // speed (m/s) for full amplitude
 
-  void compute(int leg, double phase_i, double vx, double vy, double rot,
+  void compute(int leg, double phase, double orthogonal, double vx, double vy,
                double& fx, double& fy, double& fz);
+};
+
+// Per-leg mounting geometry (body frame). Used to convert a body-frame foot
+// target into the coxa frame for LegIK.
+struct LegGeometry {
+  double coxa_x, coxa_y, coxa_z;   // coxa (c1) origin in body frame
+  double c1_y_x, c1_y_y;           // c1 +Y axis in body frame (horizontal)
 };
 
 
