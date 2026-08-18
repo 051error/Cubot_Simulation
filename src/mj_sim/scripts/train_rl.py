@@ -1,13 +1,7 @@
 #!/usr/bin/env python3
 """CPG+RL training for hexapod walking — aligned with arXiv:2310.07744.
 
-Architecture (matches "Terrain-adaptive CPGs with RL for Hexapod Locomotion"):
-  RL policy → CPG foot-trajectory params (8D) → Hopf oscillators
-  → foot positions in coxa frame (6×3D) → IK solver → joint angles (18D)
-  → MuJoCo simulation
-
-Reference: arXiv:2310.07744, Table I (reward), Fig.2 (CPG architecture),
-           Section III-B (observation), Eq.5 (action space).
+Pipeline: RL policy → CPG foot params (8D) → Hopf oscillators → IK → MuJoCo.
 """
 
 import os, sys, time, argparse, glob
@@ -78,20 +72,7 @@ def quat_to_rotation_matrix(quat):
 # ══════════════════════════════════════════════════════════════════════════
 
 class HexapodEnv(gym.Env):
-    """Hexapod walking with CPG+IK, aligned with arXiv:2310.07744.
-
-    Observation (71D):
-      [0:3]    projected_gravity  (body-frame gravity direction)
-      [3:6]    body_vel           (vx, vy, wz in body frame)
-      [6:24]   feet_pos           (6 feet × xyz in body frame)
-      [24:42]  feet_vel           (6 feet × vxyz in body frame)
-      [42:48]  foot_contact       (1=touching, 0=air)
-      [48:51]  cmd                (joystick velocity command)
-      [51:59]  prev_action        (previous CPG params, for smoothing)
-      [59:71]  osc_state          (Hopf oscillator x,y for 6 legs)
-
-    Action (8D): CPG foot-trajectory parameters (paper Eq.5).
-    """
+    """Hexapod walking with CPG+IK (71D obs, 8D action)."""
 
     metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 50}
 
@@ -218,12 +199,7 @@ class HexapodEnv(gym.Env):
         return obs, reward, terminated, truncated, {}
 
     def _get_obs(self):
-        """Build observation (71D) aligned with paper Section III-B.
-
-        Layout: projected_gravity(3) + body_vel(3) + feet_pos(18)
-                + feet_vel(18) + foot_contact(6) + cmd(3)
-                + prev_action(8) + osc_state(12)
-        """
+        """Build the 71D observation."""
         d = self.data; m = self.model
 
         quat = d.xquat[self.body_id].copy() if self.body_id >= 0 else np.array([1., 0., 0., 0.])
@@ -287,13 +263,7 @@ class HexapodEnv(gym.Env):
     # ─── Reward (paper Table I) ─────────────────────────────────────────
 
     def _compute_reward(self):
-        """11-term reward from CPG+RL paper Table I, with cmd-relative σ².
-
-        Paper uses all terms with dt scaling (dt=0.005). Our dt=0.02 so
-        we omit dt scaling to keep reasonable reward magnitudes.
-        Penalty weights reduced 10× (joint pos, torque) to compensate for
-        CPG-driven joint motion vs paper's hip-only penalty.
-        """
+        """11-term reward (paper Table I); dt scaling omitted, penalties ×0.1."""
         d = self.data; m = self.model
 
         quat = d.xquat[self.body_id] if self.body_id >= 0 else np.array([1., 0., 0., 0.])

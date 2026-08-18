@@ -7,3 +7,6 @@ __pycache__
 # RL training artifacts (checkpoints / tensorboard logs)
 rl_checkpoints/
 rl_logs/
+
+# Claude Code local settings
+.claude/

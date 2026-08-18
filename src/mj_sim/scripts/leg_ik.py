@@ -1,18 +1,7 @@
-"""KD-tree Inverse Kinematics for PhantomX 3-DOF hexapod leg.
+"""KD-tree IK for the 3-DOF hexapod leg.
 
-c1_rest frame: X = vertical (world Z, up+), Y = fwd from hip, Z = lateral.
-Precomputed FK grid → cKDTree nearest-neighbor lookup → ~330 µs per solve.
-
-Joint rotation conventions (verified against MuJoCo):
-  j_c1_rf   (θ0): POST-multiply — body rotates in its own local frame
-  j_thigh_rf (θ1): PRE-multiply  — body rotates in parent frame
-  j_tibia_rf (θ2): POST-multiply — body rotates in its own local frame
-  Post-multiply: position offset does NOT rotate with the joint
-  Pre-multiply:  position offset DOES rotate with the joint
-
-Usage:
-    from leg_ik import LegIK
-    angles = LegIK.solve(x_m, y_m, z_m, leg_idx=0)
+Precomputed FK grid → cKDTree lookup. c1_rest frame: X=vertical, Y=forward,
+Z=lateral.
 """
 
 import numpy as np
@@ -185,20 +174,7 @@ _kd_tree = _cKDTree(_fk_grid_p)
 # ══════════════════════════════════════════════════════════════════════════
 
 class LegIK:
-    """IK via KD-tree lookup on precomputed FK grid.
-
-    FK grid: 76³ ≈ 439K points at 0.04 rad resolution.
-    Query time: ~330 µs per solve, ~2.4mm avg accuracy.
-    RL policy compensates for residual IK error via feedback.
-
-    Args:
-        x, y, z: foot target position in c1_rest frame (meters).
-                 X = vertical (positive up), Y = forward, Z = lateral.
-        leg_idx: ignored (stateless lookup). Kept for API compatibility.
-
-    Returns:
-        np.ndarray[float32, shape=(3,)]: joint angles [θ₀, θ₁, θ₂] in radians.
-    """
+    """IK via KD-tree lookup on the precomputed FK grid (76³ points, ~330 µs)."""
 
     # Leg indexing matches XML body order:
     #   Right side: rf=0, rm=1, rr=2
@@ -207,12 +183,7 @@ class LegIK:
 
     @staticmethod
     def solve(x, y, z, leg_idx=0):
-        """Solve IK for given foot target in c1_rest frame.
-
-        For left-side legs, the c1_rest frame is mirrored left-right compared
-        to c1_rf (the reference leg whose FK grid we precomputed). We must
-        negate both the target Z (lateral) and the resulting θ₀ (coxa angle).
-        """
+        """Solve IK; left legs mirror Z and the resulting coxa angle."""
         if leg_idx in LegIK._LEFT_LEGS:
             z = -z  # mirror lateral coordinate for left legs
             angles = _fk_grid_q[_kd_tree.query([x, y, z], k=1)[1]].astype(np.float32)

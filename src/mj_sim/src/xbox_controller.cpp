@@ -19,44 +19,33 @@ XboxController::XboxController(rclcpp::Node* node)
 
 void XboxController::joy_callback(const sensor_msgs::msg::Joy::SharedPtr msg)
 {
-  // Xbox: 0=LX 1=LY 2=LT 3=RX 4=RY 5=RT
+  // Xbox axes: 0=LX 1=LY 2=LT 3=RX 4=RY 5=RT.
   if (msg->axes.size() >= 5) {
     left_stick_  = {msg->axes[0], msg->axes[1]};
     right_stick_ = {msg->axes[3], msg->axes[4]};
   }
   buttons_ = msg->buttons;
-  // Track shoulder buttons individually so the controller can distinguish
-  // "RB only" (TURN mode) from "LB+RB" (RL mode).
+
+  // Shoulder buttons: RB only = TURN, LB+RB = RL.
   lb_ = (msg->buttons.size() > 4) ? (msg->buttons[4] == 1) : false;
   rb_ = (msg->buttons.size() > 5) ? (msg->buttons[5] == 1) : false;
   is_pressed_ = lb_ && rb_;
+  policy_mode = is_pressed_ ? 1 : 0;
 
-  if (is_pressed_) {
-    policy_mode = 1;  // RL
-  } else {
-    policy_mode = 0;
-  }
-
-  // Update action flags
   ac_a = (msg->buttons.size() > 0) ? (msg->buttons[0] == 1) : false;
   ac_b = (msg->buttons.size() > 1) ? (msg->buttons[1] == 1) : false;
   ac_x = (msg->buttons.size() > 2) ? (msg->buttons[2] == 1) : false;
   ac_y = (msg->buttons.size() > 3) ? (msg->buttons[3] == 1) : false;
 
-  // Convert stick values to velocity commands
-  // Left stick Y (axes[1]) → forward speed
-  // Left stick X (axes[0]) → lateral speed
-  // Right stick X (axes[3]) → angular speed (turn). Only left/right push is
-  // read; right stick Y (axes[4], up/down) is intentionally ignored.
+  // Left stick Y = forward, X = lateral; right stick X = turn.
   linear_x_  = msg->axes[1] * kMaxLinearSpeed;
   linear_y_  = msg->axes[0] * kMaxLinearSpeed;
-  angular_z_ = msg->axes[3] * kMaxAngularSpeed;  // right stick X → rotation
+  angular_z_ = msg->axes[3] * kMaxAngularSpeed;
 
-  // Publish high-level velocity command
   auto cmd = mj_sim::msg::UpCmd();
-  cmd.linear_x   = linear_x_;
-  cmd.linear_y   = linear_y_;
-  cmd.angular_z  = angular_z_;
+  cmd.linear_x    = linear_x_;
+  cmd.linear_y    = linear_y_;
+  cmd.angular_z   = angular_z_;
   cmd.policy_mode = policy_mode;
   cmd.ac_a = ac_a;
   cmd.ac_b = ac_b;

@@ -1,22 +1,8 @@
 #!/usr/bin/env python3
-"""Automated turn-mode balance test for the cubot hexapod.
+"""Automated turn-mode balance test.
 
-Drives the robot in TURN mode (RB held + right stick X) at a FAST and a SLOW
-speed, samples its attitude from /mujoco/low_state, and reports balance metrics
-to the ROS log and a text file.
-
-Control mapping (must match xbox_controller.cpp / robot_ctrl.cpp):
-  Joy.axes[3]    = right stick X  -> turn direction & speed, in [-1, 1]
-  Joy.buttons[5] = RB (1 = held)  -> TURN mode
-  Joy.buttons[4] = LB             -> must stay 0 (LB+RB would enter RL mode)
-  sign of axes[3]: >0 -> turn right, <0 -> turn left.
-
-Balance metric (same convention as the C++ HUD and the Python overlay):
-  roll  = atan2(gy, -gz),  pitch = atan2(-gx, -gz)   from imu_quat (w,x,y,z)
-  "BALANCED" when |roll| < 2 deg AND |pitch| < 2 deg, else "TILTED".
-
-NOTE: this node publishes /joy continuously. Run it with the physical joystick
-      untouched (or joy_node silent) so the two /joy publishers don't fight.
+Drives TURN mode (RB held + right stick X) at fast/slow speeds and reports roll/
+pitch balance from /mujoco/low_state. Publishes /joy.
 """
 
 import argparse

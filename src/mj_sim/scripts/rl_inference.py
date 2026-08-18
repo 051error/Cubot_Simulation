@@ -1,14 +1,9 @@
 #!/usr/bin/env python3
 """CPG+RL inference node — aligned with arXiv:2310.07744.
 
-Architecture (must match train_rl.py exactly):
-  RL policy → CPG foot-trajectory params (8D) → Hopf oscillators
-  → foot positions in coxa frame (6×3D) → IK solver → joint angles (18D)
-  → publish /rl_action
-
-Observation layout:
-  projected_gravity(3) + body_vel(3) + feet_pos(18) + feet_vel(18)
-  + foot_contact(6) + cmd(3) + prev_action(8) + osc_state(12) = 71
+Pipeline: RL policy → CPG foot params (8D) → foot positions → IK → /rl_action.
+Observation (71D): gravity(3)+body_vel(3)+feet_pos(18)+feet_vel(18)+contact(6)
++cmd(3)+prev_action(8)+osc_state(12).
 """
 
 import os, sys, time

@@ -27,6 +27,7 @@ include_directories(include)
 
 add_library(xbox_controller SHARED src/xbox_controller.cpp)
 add_library(ik_solver SHARED src/ik_solver.cpp)
+add_library(gait src/gait.cpp)
 add_executable(robot_ctrl src/robot_ctrl.cpp)
 
 rosidl_get_typesupport_target(cpp_ts_target ${PROJECT_NAME} "rosidl_typesupport_cpp")
@@ -46,7 +47,7 @@ ament_target_dependencies(robot_ctrl
   ament_index_cpp
 )
 
-target_link_libraries(robot_ctrl xbox_controller ik_solver)
+target_link_libraries(robot_ctrl xbox_controller ik_solver gait)
 target_link_options(robot_ctrl PRIVATE "-Wl,-rpath,\$ORIGIN")
 
 install(TARGETS xbox_controller ik_solver robot_ctrl

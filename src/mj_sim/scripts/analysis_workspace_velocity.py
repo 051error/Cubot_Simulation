@@ -1,11 +1,8 @@
 #!/usr/bin/env python3
-"""Foot workspace analysis and CPG max velocity calculation for Cubot hexapod.
+"""Foot workspace analysis and CPG max velocity calculation.
 
-Task 1: Sample full joint range via FK to characterize foot workspace in c1_rest frame.
-Task 2: Compute max foot velocity during a CPG gait cycle using Hopf-oscillator dynamics.
-
-Usage:
-    python analysis_workspace_velocity.py
+Task 1: sample joint range via FK to characterize the foot workspace.
+Task 2: compute max foot velocity during a CPG cycle.
 """
 
 import numpy as np
