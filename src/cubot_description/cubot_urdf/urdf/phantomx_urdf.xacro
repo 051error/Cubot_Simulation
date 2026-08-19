@@ -84,7 +84,7 @@
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0" />
       <geometry>
-        <mesh filename="file://$(find cubot_description)/cubot_urdf/meshes/body.STL" scale="1 1 1"/>
+        <mesh filename="package://cubot_description/cubot_urdf/meshes/body.STL" scale="1 1 1"/>
       </geometry>
       <material name="Grey">
         <color rgba="0.55 0.55 0.55 1.0"/>
@@ -131,7 +131,7 @@
     <visual>
       <origin xyz="0 -0.0252 0" rpy="0 0 0" />
       <geometry>
-        <mesh filename="file://$(find cubot_description)/cubot_urdf/meshes/connect.STL" scale="1 1 1"/>
+        <mesh filename="package://cubot_description/cubot_urdf/meshes/connect.STL" scale="1 1 1"/>
       </geometry>
       <material name="Grey">
         <color rgba="0.55 0.55 0.55 1.0"/>
@@ -158,7 +158,7 @@
     <visual>
       <origin xyz="0 -0.0252 0" rpy="0 0 0" />
       <geometry>
-        <mesh filename="file://$(find cubot_description)/cubot_urdf/meshes/connect.STL" scale="1 1 1"/>
+        <mesh filename="package://cubot_description/cubot_urdf/meshes/connect.STL" scale="1 1 1"/>
       </geometry>
       <material name="Grey">
         <color rgba="0.55 0.55 0.55 1.0"/>
@@ -186,7 +186,7 @@
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0" />
       <geometry>
-        <mesh filename="file://$(find cubot_description)/cubot_urdf/meshes/thigh_l.STL" scale="1 1 1"/>
+        <mesh filename="package://cubot_description/cubot_urdf/meshes/thigh_l.STL" scale="1 1 1"/>
       </geometry>
       <material name="Grey">
         <color rgba="0.55 0.55 0.55 1.0"/>
@@ -214,7 +214,7 @@
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0" />
       <geometry>
-        <mesh filename="file://$(find cubot_description)/cubot_urdf/meshes/tibia_l.STL" scale="1 1 1"/>
+        <mesh filename="package://cubot_description/cubot_urdf/meshes/tibia_l.STL" scale="1 1 1"/>
       </geometry>
       <material name="Grey">
         <color rgba="0.55 0.55 0.55 1.0"/>

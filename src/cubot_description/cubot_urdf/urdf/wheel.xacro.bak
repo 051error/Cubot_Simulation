@@ -93,7 +93,7 @@
     <visual>
       <origin xyz="0 0 0" rpy="${PI/2} 0 0" />
       <geometry>
-        <mesh filename="$(find cubot_description)/cubot_urdf/meshes/detailed_wheel.dae" scale="1 1 1"/>
+        <mesh filename="package://cubot_description/cubot_urdf/meshes/detailed_wheel.dae" scale="1 1 1"/>
       </geometry>
       <material name="WheelGray">
         <color rgba="0.22 0.22 0.22 1.0" />

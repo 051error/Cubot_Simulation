@@ -1,4 +1,4 @@
 {
-    "cmake.sourceDirectory": "/home/ubunbun/test/code_test/test_item/cubot/cubot_ws/src/cubot_description",
+    "cmake.sourceDirectory": "${workspaceFolder}/src/cubot_description",
     "git.autorefresh": false
 }

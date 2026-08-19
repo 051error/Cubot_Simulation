@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """URDF→MJCF converter for cubot robot. Run after xacro generation."""
-import xml.etree.ElementTree as ET, os, math
+import xml.etree.ElementTree as ET, os, math, shutil
 
 # Paths resolved via ament or relative to this script
 try:
@@ -26,6 +26,14 @@ ms=set()
 for m in root.iter('mesh'):
     f=os.path.basename(m.get('filename',''))
     if f: ms.add(f)
+
+# Copy the referenced meshes next to the model so the MJCF uses relative paths
+mesh_dir = os.path.join(os.path.dirname(out), "meshes")
+os.makedirs(mesh_dir, exist_ok=True)
+for m in sorted(ms):
+    src = os.path.join(md, m)
+    if os.path.exists(src):
+        shutil.copy(src, os.path.join(mesh_dir, m))
 
 Lks={}
 for l in root.iter('link'): Lks[l.get('name')]={'i':l.find('inertial'),'v':l.findall('visual'),'c':l.findall('collision')}
@@ -56,7 +64,7 @@ def rq(r):
 def hs(s): return ' '.join(str(float(v)/2) for v in s.split())
 
 L=['<mujoco model="cubot">','  <compiler angle="radian"/>','','  <asset>']
-for m in sorted(ms): n=m.replace('.STL','').replace('.stl',''); L.append(f'    <mesh name="{n}" file="{md}/{m}"/>')
+for m in sorted(ms): n=m.replace('.STL','').replace('.stl',''); L.append(f'    <mesh name="{n}" file="meshes/{m}"/>')
 # Crouch offset: lower the root 5 cm below the straight stance so that, with the
 # crouched keyframe below, all 6 foot tips stay planted (body height ≈12.4 cm).
 # A tiny root inertia avoids MuJoCo's zero-inertia freejoint warning.

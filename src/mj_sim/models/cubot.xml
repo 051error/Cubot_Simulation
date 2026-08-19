@@ -2,10 +2,10 @@
   <compiler angle="radian"/>
 
   <asset>
-    <mesh name="body" file="/home/ubunbun/test/code_test/test_item/cubot/cubot_ws/install/cubot_description/share/cubot_description/cubot_urdf/meshes/body.STL"/>
-    <mesh name="connect" file="/home/ubunbun/test/code_test/test_item/cubot/cubot_ws/install/cubot_description/share/cubot_description/cubot_urdf/meshes/connect.STL"/>
-    <mesh name="thigh_l" file="/home/ubunbun/test/code_test/test_item/cubot/cubot_ws/install/cubot_description/share/cubot_description/cubot_urdf/meshes/thigh_l.STL"/>
-    <mesh name="tibia_l" file="/home/ubunbun/test/code_test/test_item/cubot/cubot_ws/install/cubot_description/share/cubot_description/cubot_urdf/meshes/tibia_l.STL"/>
+    <mesh name="body" file="meshes/body.STL"/>
+    <mesh name="connect" file="meshes/connect.STL"/>
+    <mesh name="thigh_l" file="meshes/thigh_l.STL"/>
+    <mesh name="tibia_l" file="meshes/tibia_l.STL"/>
   </asset>
 
   <worldbody>
