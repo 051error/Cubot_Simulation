@@ -179,6 +179,12 @@ ros2 run mj_sim rl_inference.py
   `coxa = 0`, `thigh = -0.7593`, `tibia = -0.7108` (all six legs identical).
 - **Leg frame (c1_rest)**: X = vertical (up), Y = forward/outward, Z = lateral.
 
+## Acknowledgments
+
+The chassis and hexapod (six-leg) model are derived from the open-source
+[phantomx_description](https://github.com/HumaRobotics/phantomx_description)
+project by HumaRobotics.
+
 ## License
 
 Apache-2.0 (see `src/mj_sim/LICENSE` and `src/cubot_description/LICENSE`).

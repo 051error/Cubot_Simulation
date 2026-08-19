@@ -174,6 +174,11 @@ ros2 run mj_sim rl_inference.py
   `tibia = -0.7108`（六条腿一致）。
 - **腿部坐标系（c1_rest）**：X = 竖直（向上），Y = 前方/向外，Z = 侧向。
 
+## 致谢
+
+本项目的底盘与六足模型源自开源项目
+[phantomx_description](https://github.com/HumaRobotics/phantomx_description)（HumaRobotics）。
+
 ## 许可证
 
 Apache-2.0（见 `src/mj_sim/LICENSE` 与 `src/cubot_description/LICENSE`）。
