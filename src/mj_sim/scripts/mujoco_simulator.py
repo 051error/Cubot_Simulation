@@ -24,11 +24,21 @@ from mj_sim.msg import LowState
 class MujocoSimulator(Node):
     BALANCE_DEG = 2.0  # attitude threshold for "balanced" vs "tilted"
 
+    # Camera follow modes, cycled with the '1' key.
+    CAM_FREE = 0       # manual orbit (drag to move)
+    CAM_TRACKING = 1   # follow body position + heading
+    CAM_FOLLOW = 2     # fixed overhead, follow position only
+    CAM_LABELS = {
+        0: "CAM: free (drag to orbit, 1 to switch)",
+        1: "CAM: follow (pos + heading, 1 to switch)",
+        2: "CAM: overhead (pos only, 1 to switch)",
+    }
+
     def __init__(self):
         super().__init__("mujoco_simulator")
 
         mj_share = get_package_share_directory("mj_sim")
-        scene_path = os.path.join(mj_share, "models", "scene.xml")
+        scene_path = os.path.join(mj_share, "models", "terrain.xml")
         self.get_logger().info(f"Loading: {scene_path}")
 
         self.model = mujoco.MjModel.from_xml_path(scene_path)
@@ -59,6 +69,7 @@ class MujocoSimulator(Node):
         )
         self.receive_data = False
         self.viewer_running = True
+        self.cam_mode = self.CAM_TRACKING
         self.cmd_buffer = np.zeros(self.model.nu)
         # Init lid to closed (qpos=0, corresponds to ctrl=1)
         if self.model.nu > 18:
@@ -167,15 +178,81 @@ class MujocoSimulator(Node):
             "BALANCED" if level else "TILTED",
         )
 
+    def _on_key(self, keycode):
+        """Cycle the camera follow mode on the '1' key.
+
+        keycode: GLFW key code of the pressed key (digits map to ASCII).
+        """
+        if keycode == ord("1"):
+            self.cam_mode = (self.cam_mode + 1) % 3
+
+    def _body_pose(self):
+        """Return the MP_BODY position and rotation in the world frame.
+
+        Returns (pos, R): pos is the body origin (3-vector), R is the 3x3 xmat.
+        """
+        pos = self.data.xpos[self._body_id].copy()
+        R = self.data.xmat[self._body_id].reshape(3, 3).copy()
+        return pos, R
+
+    @staticmethod
+    def _spherical_to_world(R, azimuth, elevation):
+        """Convert body-frame camera angles to world azimuth/elevation.
+
+        R: body-to-world rotation matrix (3x3).
+        azimuth, elevation: camera angles in the body frame (degrees).
+        Returns (azimuth_world, elevation_world) in degrees.
+        """
+        ce = np.cos(np.radians(elevation))
+        fwd_body = np.array([
+            ce * np.cos(np.radians(azimuth)),
+            ce * np.sin(np.radians(azimuth)),
+            np.sin(np.radians(elevation)),
+        ])
+        fwd_world = R @ fwd_body
+        az_world = np.degrees(np.arctan2(fwd_world[1], fwd_world[0]))
+        el_world = np.degrees(np.arcsin(np.clip(fwd_world[2], -1.0, 1.0)))
+        return az_world, el_world
+
+    def _apply_camera(self, viewer):
+        """Set the viewer camera for the current follow mode.
+
+        viewer: mujoco.viewer.Handle to configure.
+        """
+        with viewer.lock():
+            cam = viewer.cam
+            if self.cam_mode == self.CAM_TRACKING:
+                # Full follow: fixed offset behind/above the body, turning with
+                # it. MuJoCo's native mjCAMERA_TRACKING only follows the body
+                # COM at a fixed world orientation, so the heading is applied by
+                # rotating a body-frame view direction into world space.
+                pos, R = self._body_pose()
+                az, el = self._spherical_to_world(R, 135.0, -25.0)
+                cam.type = mujoco.mjtCamera.mjCAMERA_FREE
+                cam.lookat[:] = pos + R @ np.array([0.0, 0.0, 0.15])
+                cam.azimuth = az
+                cam.elevation = el
+                cam.distance = 1.2
+            elif self.cam_mode == self.CAM_FOLLOW:
+                # Position-only follow: fixed world orientation, look at body.
+                cam.type = mujoco.mjtCamera.mjCAMERA_FREE
+                cam.lookat[:] = self.data.xpos[self._body_id] + [0, 0, 0.15]
+                cam.azimuth = 135.0
+                cam.elevation = -25.0
+                cam.distance = 1.2
+            else:
+                # Free mode: only force the type so the user can drag the camera.
+                cam.type = mujoco.mjtCamera.mjCAMERA_FREE
+
     def simulation_loop(self):
         with mujoco.viewer.launch_passive(
-            self.model, self.data, show_left_ui=True, show_right_ui=True
+            self.model, self.data,
+            key_callback=self._on_key,
+            show_left_ui=True, show_right_ui=True,
         ) as viewer:
-            self.get_logger().info("Viewer launched!")
-            viewer.cam.lookat[:] = [0, 0, 0.15]
-            viewer.cam.distance = 1.2
-            viewer.cam.elevation = -25
-            viewer.cam.azimuth = 135
+            self.get_logger().info(
+                "Viewer launched! Press '1' to cycle the camera mode."
+            )
 
             while self.viewer_running and rclpy.ok():
                 step_start = time.time()
@@ -196,13 +273,16 @@ class MujocoSimulator(Node):
                 self.last_ctrl_pub.publish(last_ctrl)
                 mujoco.mj_step(self.model, self.data)
 
-                # Balance overlay: attitude + balanced/tilted status (in-viewer).
+                # Apply the camera follow mode, then draw the overlay.
+                self._apply_camera(viewer)
                 text1, text2 = self._balance_overlay()
-                viewer.set_texts((
-                    mujoco.mjtFontScale.mjFONTSCALE_150,
-                    mujoco.mjtGridPos.mjGRID_TOPLEFT,
-                    text1, text2,
-                ))
+                viewer.set_texts([
+                    (mujoco.mjtFontScale.mjFONTSCALE_150,
+                     mujoco.mjtGridPos.mjGRID_TOPLEFT, text1, text2),
+                    (mujoco.mjtFontScale.mjFONTSCALE_150,
+                     mujoco.mjtGridPos.mjGRID_BOTTOMLEFT,
+                     self.CAM_LABELS[self.cam_mode], ""),
+                ])
                 viewer.sync()
                 elapsed = time.time() - step_start
                 if elapsed < 0.005:

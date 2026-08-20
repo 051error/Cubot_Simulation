@@ -61,6 +61,7 @@ mj_sim/
 │   └── UpCmd.msg         # /upper_ctrl（高层速度指令）
 ├── models/
 │   ├── scene.xml         # 世界 + 地面
+│   ├── terrain.xml       # 平地 + 台阶 + 起伏凸起（RL 地形）
 │   ├── cubot.xml         # 机器人 MJCF（由 convert_urdf.py 生成）
 │   └── meshes/           # 模型网格（与 cubot.xml 同目录，保证相对路径）
 └── scripts/
@@ -158,9 +159,19 @@ RL 管线沿用 [arXiv:2310.07744](https://arxiv.org/abs/2310.07744)（面向六
 运动的、具备地形自适应能力的 CPG + RL）的架构：策略输出 8 个 CPG 足端轨迹
 参数，Hopf 振荡器将其转化为足端位置，KD-tree IK 再解出关节角度。
 
+通过 `--scene` 可选两种场景：
+
+| 场景 | 地面 |
+| --- | --- |
+| `scene.xml`（默认） | 平坦地面 |
+| `terrain.xml` | 平地 + 台阶 + 平台 + 起伏凸起 |
+
 ```bash
-# 训练（checkpoint 落在 src/mj_sim/rl_checkpoints/）
+# 在平坦地面上训练（默认）
 python3 src/mj_sim/scripts/train_rl.py --total_steps 5000000
+
+# 在起伏地形上训练
+python3 src/mj_sim/scripts/train_rl.py --scene terrain.xml --total_steps 5000000
 
 # 运行训练好的策略（发布 /rl_action）
 ros2 run mj_sim rl_inference.py

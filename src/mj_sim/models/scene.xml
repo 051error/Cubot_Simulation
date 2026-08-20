@@ -21,7 +21,7 @@
   </asset>
 
   <worldbody>
-    <light pos="0 0 1.5" dir="0 0 -1" directional="true"/>
+    <light pos="0 0 1.5" dir="0 0 -1" directional="true" castshadow="false"/>
     <geom name="floor" type="plane" size="0 0 0.05" material="groundplane" friction="1.8 0.5 0.5" condim="4"/>
   </worldbody>
 </mujoco>

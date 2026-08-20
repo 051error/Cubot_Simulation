@@ -76,9 +76,9 @@ class HexapodEnv(gym.Env):
 
     metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 50}
 
-    def __init__(self, render_mode=None):
+    def __init__(self, render_mode=None, xml_path=None):
         super().__init__()
-        self.model = mujoco.MjModel.from_xml_path(MODEL_XML)
+        self.model = mujoco.MjModel.from_xml_path(xml_path or MODEL_XML)
         self.data   = mujoco.MjData(self.model)
 
         self.foot_names = [
@@ -490,8 +490,8 @@ def find_latest_checkpoint():
     return ckpts[-1] if ckpts else None
 
 
-def _make_env():
-    return Monitor(HexapodEnv())
+def _make_env(xml_path=None):
+    return Monitor(HexapodEnv(xml_path=xml_path))
 
 
 def main():
@@ -502,6 +502,8 @@ def main():
     parser.add_argument("--save_freq",   type=int, default=5_000)
     parser.add_argument("--resume", action="store_true", default=True)
     parser.add_argument("--render", action="store_true")
+    parser.add_argument("--scene", default="terrain.xml",
+                        help="model scene in models/ (e.g. scene.xml, terrain.xml)")
     args = parser.parse_args()
 
     os.makedirs(LOG_DIR, exist_ok=True)
@@ -509,9 +511,11 @@ def main():
     n_envs = args.n_envs
     print(f"CPG+RL (paper-aligned): {n_envs} parallel envs on {os.cpu_count()} CPUs")
     print(f"  RL → {N_CPG_PARAMS} foot-trajectory params → Hopf CPG → IK → 18 joints")
-    env = DummyVecEnv([_make_env for _ in range(n_envs)])
+    xml_path = os.path.join(os.path.dirname(__file__), "..", "models", args.scene)
+    print(f"  scene: {xml_path}")
+    env = DummyVecEnv([lambda: _make_env(xml_path) for _ in range(n_envs)])
     # NOTE: SubprocVecEnv hangs with EGL backend; use DummyVecEnv instead
-    eval_env = _make_env()
+    eval_env = _make_env(xml_path)
 
     policy_kwargs = dict(net_arch=dict(pi=[128, 64], vf=[128, 64]))
 

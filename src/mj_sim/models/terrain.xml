@@ -1,0 +1,61 @@
+<mujoco model="cubot_terrain">
+  <include file="cubot.xml"/>
+  <include file="hills.xml"/>
+
+  <option gravity="0 0 -9.81" timestep="0.005"/>
+
+  <statistic center="2.5 0 0.15" extent="3.5"/>
+
+  <visual>
+    <headlight diffuse="0.6 0.6 0.6" ambient="0.3 0.3 0.3"/>
+    <global azimuth="130" elevation="-25"/>
+  </visual>
+
+  <asset>
+    <texture type="skybox" builtin="gradient" rgb1="0.3 0.5 0.7" rgb2="0 0 0"
+             width="512" height="512"/>
+    <texture name="groundplane" type="2d" builtin="checker" mark="edge"
+             rgb1="0.2 0.2 0.2" rgb2="0.35 0.35 0.35"
+             markrgb="0.5 0.5 0.5" width="300" height="300"/>
+    <material name="groundplane" texture="groundplane" texuniform="true"
+             texrepeat="8 8" reflectance="0.15"/>
+  </asset>
+
+  <worldbody>
+    <light pos="0 0 1.5" dir="0 0 -1" directional="true" castshadow="false"/>
+
+    <!-- Flat ground: the robot spawns (x = 0) and warms up here, then walks
+         into the obstacles along +X. -->
+    <geom name="flat_ground" type="plane" size="0 0 0.05" material="groundplane"
+          friction="1.8 0.5 0.5" condim="4"/>
+
+    <!-- Rising stairs: three 3 cm steps (foot lift is ~4 cm, so the first two
+         steps are climbable and the third is a stretch goal). -->
+    <geom name="step1" type="box" size="0.1 0.5 0.015" pos="0.9 0 0.015"
+          rgba="0.50 0.45 0.40 1" friction="1.8 0.5 0.5" condim="4"/>
+    <geom name="step2" type="box" size="0.1 0.5 0.040" pos="1.1 0 0.040"
+          rgba="0.50 0.45 0.40 1" friction="1.8 0.5 0.5" condim="4"/>
+    <geom name="step3" type="box" size="0.1 0.5 0.045" pos="1.3 0 0.045"
+          rgba="0.50 0.45 0.40 1" friction="1.8 0.5 0.5" condim="4"/>
+
+    <!-- Flat platform at the top of the stairs. -->
+    <geom name="platform" type="box" size="0.25 0.5 0.045" pos="1.65 0 0.045"
+          rgba="0.45 0.42 0.38 1" friction="1.8 0.5 0.5" condim="4"/>
+
+    <!-- Descending stairs back to the flat ground. -->
+    <geom name="step_dn1" type="box" size="0.1 0.5 0.030" pos="2.0 0 0.030"
+          rgba="0.50 0.45 0.40 1" friction="1.8 0.5 0.5" condim="4"/>
+    <geom name="step_dn2" type="box" size="0.1 0.5 0.015" pos="2.2 0 0.015"
+          rgba="0.50 0.45 0.40 1" friction="1.8 0.5 0.5" condim="4"/>
+
+    <!-- Rolling bumps: low, closely-spaced mounds to force uneven-footing
+         adaptation on the far side of the stairs. -->
+    <geom name="bump1" type="box" size="0.08 0.5 0.015" pos="2.8 0 0.015"
+          rgba="0.52 0.48 0.42 1" friction="1.8 0.5 0.5" condim="4"/>
+    <geom name="bump2" type="box" size="0.08 0.5 0.025" pos="3.0 0 0.025"
+          rgba="0.52 0.48 0.42 1" friction="1.8 0.5 0.5" condim="4"/>
+    <geom name="bump3" type="box" size="0.08 0.5 0.015" pos="3.2 0 0.015"
+          rgba="0.52 0.48 0.42 1" friction="1.8 0.5 0.5" condim="4"/>
+
+  </worldbody>
+</mujoco>
