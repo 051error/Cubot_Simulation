@@ -10,3 +10,6 @@ float64[3]  body_vel      # body-frame velocity (vx, vy, wz)
 float64[18] feet_pos      # 6 feet x (x,y,z) in body frame
 float64[18] feet_vel      # 6 feet x (vx,vy,vz) in body frame
 float64[6]  foot_contact  # ground contact: 1=touching, 0=in air
+
+# 360° rangefinder distances (24 azimuths x 3 elevations: -15°, -25°, -35°)
+float64[72] rangefinder   # raw ray distance in m; -1.0 = no hit (miss)

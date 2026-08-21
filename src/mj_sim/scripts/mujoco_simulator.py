@@ -155,6 +155,10 @@ class MujocoSimulator(Node):
 
             self._prev_foot_pos = cur_feet
 
+        # 360° rangefinder distances (24 azimuths x 3 elevations = 72).
+        if m.nsensor >= 72:
+            msg.rangefinder[:] = d.sensordata[:72]
+
         self.low_state_pub.publish(msg)
 
     def _balance_overlay(self):
@@ -253,6 +257,12 @@ class MujocoSimulator(Node):
             self.get_logger().info(
                 "Viewer launched! Press '1' to cycle the camera mode."
             )
+
+            # Hide the rangefinder rays (visualization only). This only turns off
+            # the yellow ray drawing; the sensors keep outputting distances in
+            # d.sensordata regardless of this flag.
+            with viewer.lock():
+                viewer.opt.flags[mujoco.mjtVisFlag.mjVIS_RANGEFINDER] = False
 
             while self.viewer_running and rclpy.ok():
                 step_start = time.time()

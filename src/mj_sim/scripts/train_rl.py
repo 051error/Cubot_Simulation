@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""CPG+RL training for hexapod walking — aligned with arXiv:2310.07744.
+"""CPG+RL training for hexapod walking — residual joint-angle policy.
 
-Pipeline: RL policy → CPG foot params (8D) → Hopf oscillators → IK → MuJoCo.
+Pipeline: RL policy (18D residual) + C++ tripod CPG target → IK → MuJoCo.
 """
 
 import os, sys, time, argparse, glob
@@ -24,23 +24,44 @@ LATEST_PATH = os.path.join(CKPT_DIR, "latest_model.zip")
 
 N_LEGS  = 6
 N_JOINTS = N_LEGS * 3          # 18
-CTRL_DT  = 0.02                 # 50Hz control (paper: 200Hz policy, 1000Hz CPG)
-SIM_STEPS_PER_CTRL = 10
+CTRL_DT  = 0.02                 # 50Hz RL control
+SIM_STEPS_PER_CTRL = 4          # 0.02s / 0.005s -> CPG integrates at 200Hz
+ACTION_SCALE = 0.2              # action in [-1,1] -> joint-angle increment (rad)
 
 # Foot tip in tibia local frame (mesh center - half_extent in Z)
 FOOT_TIP_TIBIA = np.array([0.00162782, 0.16052104, 0.02951023])
 EPISODE_STEPS = 200             # 4s per episode (fixed-length sparse reward)
 
-# CPG action space: RL outputs 8 foot-trajectory params (paper Eq.5)
-N_CPG_PARAMS = 8
+# ─── Reward config: every term is normalized to [0,1] (positive) or [-1,0]
+#     (penalty) before weighting, so the weights are directly comparable.
+REWARD_WEIGHTS = {
+    "vel":         1.0,   # 1. velocity tracking
+    "gravity":     2.0,   # 2. IMU gravity deviation (main stability)
+    "ang_vel":     1.5,   # 3. angular-velocity stability
+    "height":      0.5,   # 4. body height stability (bobbing)
+    "accel":       0.5,   # 5. body acceleration penalty (linear + angular)
+    "slip":        0.5,   # 6. stance-foot slip penalty
+    "action":      0.05,  # 7. residual magnitude penalty
+    "action_rate": 0.02,  # 8. action-change penalty
+}
+REWARD_SIGMA = {
+    "vel":        0.05,              # velocity error scale (m/s)
+    "gravity":    np.sqrt(0.2),      # gravity-deviation scale (dimensionless)
+    "ang_vel":    0.5,               # angular-velocity scale (rad/s)
+    "height_vel": 0.05,              # body-height rate scale (m/s)
+    "accel_lin":  2.0,               # linear-acceleration scale (m/s^2)
+    "accel_ang":  2.0,               # angular-acceleration scale (rad/s^2)
+    "slip":       0.1,               # foot slip-speed scale (m/s)
+}
 
 # Observation layout (must match rl_inference.py exactly):
-#   projected_gravity(3) + body_vel(3) + feet_pos(18) + feet_vel(18)
-#   + foot_contact(6) + cmd(3) + prev_action(8) + osc_state(12) = 71
-OBS_DIM = 3 + 3 + 18 + 18 + 6 + 3 + N_CPG_PARAMS + 12  # 71
+#   projected_gravity(3) + body_vel(3) + joint_pos(18) + joint_vel(18)
+#   + foot_contact(6) + cmd(3) + prev_action(18) + q_target(18)
+#   + height_map(72) = 159
+OBS_DIM = 3 + 3 + 18 + 18 + 6 + 3 + 18 + 18 + 72  # 159
 
-from leg_ik import LegIK
-from hexapod_cpg import HexapodCPG
+from cpg_gait import TripodGait, FootTrajectory, compute_joint_targets, JOINT_REF
+from height_map import rangefinder_to_height_map
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -72,7 +93,7 @@ def quat_to_rotation_matrix(quat):
 # ══════════════════════════════════════════════════════════════════════════
 
 class HexapodEnv(gym.Env):
-    """Hexapod walking with CPG+IK (71D obs, 8D action)."""
+    """Hexapod walking with CPG+IK (159D obs, 18D residual-joint action)."""
 
     metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 50}
 
@@ -91,25 +112,27 @@ class HexapodEnv(gym.Env):
         self.observation_space = spaces.Box(
             low=-np.inf, high=np.inf, shape=(OBS_DIM,), dtype=np.float32)
         self.action_space = spaces.Box(
-            low=-1.0, high=1.0, shape=(N_CPG_PARAMS,), dtype=np.float32)
+            low=-1.0, high=1.0, shape=(N_JOINTS,), dtype=np.float32)
 
         self.body_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, "MP_BODY")
         self.render_mode = render_mode
         self.viewer = None
 
-        # CPG layer — foot trajectory generator
-        self.cpg = HexapodCPG(n_legs=N_LEGS, dt=CTRL_DT)
+        # CPG layer — C++ tripod CPG + foot trajectory (shared with NORMAL mode)
+        self.cpg = TripodGait()
+        self.traj = FootTrajectory()
+        self._q_target = JOINT_REF.copy()
 
         # Episode state
         self.step_count = 0
         self.cmd = np.zeros(3)
-        self._prev_foot_pos = None
 
         # Reward state
         self._prev_action = None
-        self._prev_joint_vel = None
-        self._feet_air_time = np.zeros(N_LEGS, dtype=np.float32)
-        self._feet_contact_prev = np.zeros(N_LEGS, dtype=bool)
+        self._prev_body_lin = None     # body linear velocity at previous step (accel term)
+        self._prev_body_ang = None     # body angular velocity at previous step (accel term)
+        self._prev_body_z = None       # body z at previous step (height-rate term)
+        self._prev_foot_tip = None     # foot-tip world positions at previous step (slip term)
         self._ep_reward_sum = 0.0   # accumulated reward for fixed-length episode
 
         # Success metric
@@ -140,52 +163,38 @@ class HexapodEnv(gym.Env):
             mujoco.mj_forward(self.model, self.data)
 
         self.step_count = 0
-        self._prev_foot_pos = None
         self._prev_action = None
-        self._prev_joint_vel = None
-        self._feet_air_time[:] = 0.0
-        self._feet_contact_prev[:] = False
+        self._prev_body_lin = None
+        self._prev_body_ang = None
+        self._prev_body_z = None
+        self._prev_foot_tip = None
         self._vel_error_sum = 0.0
         self._vel_error_count = 0
         self._ep_reward_sum = 0.0
         self.cpg.reset()
-        LegIK.clear_cache()  # reset warm starts for new episode
+        self._q_target = JOINT_REF.copy()
 
         self._sample_cmd()
         return self._get_obs(), {}
 
     def step(self, action):
-        # ── CPG → foot positions → IK → joint angles → simulation ──────
-        # Coxa-driven gait: coxa_amp is primary speed control.
-        # No forward bias — RL learns full speed range from command alone.
-        # action[0] ∈ [-1,1] → coxa_amp ∈ [0.005, 0.025]m → speed ∈ [0, ~11] cm/s.
-        foot_targets = self.cpg.step(action)
-
-        # Solve IK for each leg independently.
-        # CPG outputs in "logical" frame: [x=lateral, y=forward, z=vertical]
-        # c1_rest frame: X=vertical, Y=forward, Z=lateral
-        # Remapping: target_c1 = [cpg_z, cpg_y, cpg_x]
-        joint_targets = np.empty(N_JOINTS, dtype=np.float32)
-        for i in range(N_LEGS):
-            j = i * 3
-            angles = LegIK.solve(
-                foot_targets[j + 2],  # c1_rest X = vertical (CPG z)
-                foot_targets[j + 1],  # c1_rest Y = forward  (CPG y)
-                foot_targets[j + 0],  # c1_rest Z = lateral  (CPG x)
-                leg_idx=i,
-            )
-            joint_targets[j:j+3] = angles
-
-        self.data.ctrl[:18] = np.clip(joint_targets, -2.5, 2.5)
+        # ── CPG target joints + RL residual -> joint angles -> simulation ──
+        # The C++ tripod CPG + foot trajectory + analytic IK (same as NORMAL
+        # mode) produce a target q at 200Hz. The policy adds a per-joint
+        # residual (action in [-1,1] -> +-ACTION_SCALE rad) on top of it.
+        action = np.asarray(action, dtype=np.float32)
+        action = np.clip(action, -1.0, 1.0)
+        self._current_action = action.copy()
 
         for _ in range(SIM_STEPS_PER_CTRL):
+            q_target = compute_joint_targets(self.cpg, self.traj,
+                                             self.cmd[0], self.cmd[1])
+            q = q_target + action * ACTION_SCALE
+            self.data.ctrl[:18] = np.clip(q, -2.5, 2.5)
             mujoco.mj_step(self.model, self.data)
+        self._q_target = q_target
 
         self.step_count += 1
-
-        # Fixed-length episode: the velocity command is sampled once in reset()
-        # and held constant for the whole episode (no mid-episode resampling).
-        self._current_action = action.copy()  # store actual CPG action applied
 
         obs = self._get_obs()
         step_reward = self._compute_reward()
@@ -199,7 +208,7 @@ class HexapodEnv(gym.Env):
         return obs, reward, terminated, truncated, {}
 
     def _get_obs(self):
-        """Build the 71D observation."""
+        """Build the 159D observation."""
         d = self.data; m = self.model
 
         quat = d.xquat[self.body_id].copy() if self.body_id >= 0 else np.array([1., 0., 0., 0.])
@@ -211,59 +220,43 @@ class HexapodEnv(gym.Env):
         body_ang = R @ world_vel[3:6]
         body_vel = np.array([body_lin[0], body_lin[1], body_ang[2]], dtype=np.float32)
 
-        body_pos = d.xpos[self.body_id].copy() if self.body_id >= 0 else np.zeros(3)
-        feet_pos = np.empty(18, dtype=np.float32)
-        feet_vel = np.empty(18, dtype=np.float32)
+        joint_pos = d.qpos[7:25].copy()
+        joint_vel = d.qvel[6:24].copy()
+
         contacts = np.empty(6, dtype=np.float32)
-
-        prev_feet = self._prev_foot_pos
-        dt = CTRL_DT
-
         for i, fid in enumerate(self.foot_ids):
-            j = i * 3
             if fid >= 0:
-                fp_world = d.xpos[fid].copy()
-                fp_body = R @ (fp_world - body_pos)
-                feet_pos[j:j+3] = fp_body
-
-                if prev_feet is not None:
-                    fv_world = (fp_world - prev_feet[i]) / dt
-                else:
-                    fv_world = np.zeros(3)
-                feet_vel[j:j+3] = R @ fv_world
-
                 tibia_rot = d.xmat[fid].reshape(3, 3)
-                foot_tip_world = fp_world + tibia_rot @ FOOT_TIP_TIBIA
+                foot_tip_world = d.xpos[fid] + tibia_rot @ FOOT_TIP_TIBIA
                 contacts[i] = 1.0 if foot_tip_world[2] < 0.015 else 0.0
             else:
-                feet_pos[j:j+3] = 0.0
-                feet_vel[j:j+3] = 0.0
                 contacts[i] = 0.0
 
-        self._prev_foot_pos = [d.xpos[fid].copy() if fid >= 0 else np.zeros(3)
-                               for fid in self.foot_ids]
-
         prev_action = self._prev_action if self._prev_action is not None \
-                      else np.zeros(N_CPG_PARAMS, dtype=np.float32)
+                      else np.zeros(N_JOINTS, dtype=np.float32)
 
-        osc_state = self.cpg.get_osc_state()
+        # 360° rangefinder -> robot-centric local height map (72 ground heights
+        # = 24 azimuths x [near, mid, far]), appended to the observation.
+        ranges = d.sensordata[:72] if m.nsensor >= 72 else np.full(72, -1.0)
+        height_map = rangefinder_to_height_map(ranges)
 
         obs = np.concatenate([
-            projected_gravity,
-            body_vel / np.array([0.3, 0.3, 2.0]),
-            feet_pos / 0.2,
-            feet_vel / 0.5,
-            contacts,
-            self.cmd.copy() / np.array([0.05, 0.05, 1.0]),  # normalized to /upper_ctrl limits
-            prev_action,
-            osc_state,                                      # in [-1, 1]
+            projected_gravity,                                # 3
+            body_vel / np.array([0.3, 0.3, 2.0]),             # 3
+            joint_pos / 1.0,                                  # 18
+            joint_vel / 5.0,                                  # 18
+            contacts,                                         # 6
+            self.cmd.copy() / np.array([0.05, 0.05, 1.0]),    # 3
+            prev_action,                                      # 18
+            self._q_target / 1.0,                             # 18
+            height_map / 0.5,                                 # 72
         ]).astype(np.float32)
         return np.clip(obs, -10.0, 10.0)
 
-    # ─── Reward (paper Table I) ─────────────────────────────────────────
+    # ─── Reward (8 normalized terms, weighted) ──────────────────────────
 
     def _compute_reward(self):
-        """11-term reward (paper Table I); dt scaling omitted, penalties ×0.1."""
+        """8-term reward; each term normalized to [0,1] or [-1,0] before weighting."""
         d = self.data; m = self.model
 
         quat = d.xquat[self.body_id] if self.body_id >= 0 else np.array([1., 0., 0., 0.])
@@ -272,103 +265,99 @@ class HexapodEnv(gym.Env):
         body_lin = R @ world_vel[0:3]
         body_ang = R @ world_vel[3:6]
 
-        cmd_vx, cmd_vy, cmd_wz = self.cmd
+        cmd_vx, cmd_vy, _ = self.cmd
         dt = CTRL_DT
-
-        # 1a. Forward velocity tracking — tight sigma to force speed modulation.
-        #    sigma floor 0.001 → sigma=3.2cm/s. Robot speed range is 3-11 cm/s,
-        #    so the policy must learn to modulate speed to match cmd, not just
-        #    walk at a single fixed speed.
-        err_vx_sq = (body_lin[0] - cmd_vx)**2
-        sigma_sq_vx = max(cmd_vx**2 * 0.2, 0.001)
-        r_lin_vel_x = np.exp(-err_vx_sq / sigma_sq_vx) * 3.0
-
-        # 1b. Lateral velocity tracking (slightly wider — robot has inherent drift)
-        err_vy_sq = (body_lin[1] - cmd_vy)**2
-        sigma_sq_vy = max(max(abs(cmd_vy), 0.02)**2 * 0.2, 0.002)
-        r_lin_vel_y = np.exp(-err_vy_sq / sigma_sq_vy) * 1.0
-
-        # 2. Forward velocity shaping — small bonus for moving in cmd direction.
-        #    Capped at cmd_vx and reduced weight so it doesn't dominate tracking.
-        if abs(cmd_vx) > 0.02:
-            actual = body_lin[0] * np.sign(cmd_vx)
-            r_forward = np.clip(actual, 0.0, abs(cmd_vx)) * 2.0
-        else:
-            r_forward = 0.0
-
-        # 2. Yaw suppression (cmd_wz is always 0 — rotation is TURN mode's job,
-        #    so this term only penalizes unwanted yaw drift).
-        err_wz_sq = body_ang[2]**2
-        sigma_sq_ang = 0.05
-        r_ang_vel = np.exp(-err_wz_sq / sigma_sq_ang) * 1.0
-
-        # 3. Linear velocity Z penalty  (paper: −1dt)
-        r_lin_vel_z = -(body_lin[2]**2) * 1.0
-
-        # 4. Angular velocity XY penalty  (paper: −0.05dt)
-        r_ang_vel_xy = -(body_ang[0]**2 + body_ang[1]**2) * 0.05
-
-        # 5. Joint position penalty  (paper: −0.5dt hip-only; we: −0.005 all 18)
-        joint_pos = d.qpos[7:25]
-        r_joint_pos = -np.sum(np.square(joint_pos)) * 0.005
-
-        # 6. Joint velocity penalty  (paper: −0.001dt)
-        joint_vel = d.qvel[6:24]
-        r_joint_vel = -np.sum(np.square(joint_vel)) * 0.001
-
-        # 7. Joint acceleration penalty  (paper: −2.5e−7dt)
-        if self._prev_joint_vel is not None:
-            joint_acc = (joint_vel - self._prev_joint_vel) / CTRL_DT
-            r_joint_acc = -np.sum(np.square(joint_acc)) * 2.5e-7
-        else:
-            r_joint_acc = 0.0
-        self._prev_joint_vel = joint_vel.copy()
-
-        # 8. Action rate penalty  (paper: −0.01dt; we: −0.002)
         action = self._current_action
+
+        # 1. Velocity tracking — Gaussian kernel over the 2D horizontal velocity
+        #    error (yaw cmd is zero). 1.0 = exact match, ->0 far off.
+        err_v = np.array([body_lin[0] - cmd_vx, body_lin[1] - cmd_vy])
+        r_vel = np.exp(-np.sum(err_v ** 2) / REWARD_SIGMA["vel"] ** 2)
+
+        # 2. IMU gravity deviation (main stability) — Gaussian kernel over the
+        #    squared distance from upright [0,0,-1]. 1.0 = perfectly upright.
+        gb = quat_to_projected_gravity(quat)
+        dev_g = np.sum((gb - np.array([0.0, 0.0, -1.0])) ** 2)
+        r_gravity = np.exp(-dev_g / REWARD_SIGMA["gravity"] ** 2)
+
+        # 3. Angular-velocity stability — Gaussian kernel over the full 3-axis
+        #    body angular velocity. 1.0 = no rotation.
+        r_ang_vel = np.exp(-np.sum(body_ang ** 2) / REWARD_SIGMA["ang_vel"] ** 2)
+
+        # 4. Body height stability — minus squared body-height rate (dh/dt),
+        #    penalizing vertical bobbing rather than absolute height.
+        body_z = d.xpos[self.body_id][2] if self.body_id >= 0 else 0.124
+        if self._prev_body_z is not None:
+            dh = (body_z - self._prev_body_z) / dt
+            r_height = -np.clip(dh ** 2 / REWARD_SIGMA["height_vel"] ** 2, 0.0, 1.0)
+        else:
+            r_height = 0.0
+        self._prev_body_z = body_z
+
+        # 5. Body acceleration penalty — normalized squared linear + angular
+        #    acceleration from a finite difference of body velocity.
+        if self._prev_body_lin is not None:
+            a_lin = (body_lin - self._prev_body_lin) / dt
+            a_ang = (body_ang - self._prev_body_ang) / dt
+            r_accel = -np.clip(
+                np.sum(a_lin ** 2) / REWARD_SIGMA["accel_lin"] ** 2 +
+                np.sum(a_ang ** 2) / REWARD_SIGMA["accel_ang"] ** 2,
+                0.0, 1.0)
+        else:
+            r_accel = 0.0
+        self._prev_body_lin = body_lin.copy()
+        self._prev_body_ang = body_ang.copy()
+
+        # 6. Stance-foot slip penalty — squared horizontal velocity of feet that
+        #    are in contact (a planted stance foot should not slide sideways).
+        foot_tip = np.zeros((N_LEGS, 3), dtype=np.float32)
+        contact = np.zeros(N_LEGS, dtype=bool)
+        for i, fid in enumerate(self.foot_ids):
+            if fid >= 0:
+                tibia_rot = d.xmat[fid].reshape(3, 3)
+                foot_tip[i] = d.xpos[fid] + tibia_rot @ FOOT_TIP_TIBIA
+                contact[i] = foot_tip[i][2] < 0.015
+        if self._prev_foot_tip is not None:
+            v_foot = (foot_tip - self._prev_foot_tip) / dt
+            slip_sq = np.sum(v_foot[:, 0:2] ** 2, axis=1)
+            r_slip = -np.clip(np.sum(contact * slip_sq) /
+                              (REWARD_SIGMA["slip"] ** 2 * N_LEGS), 0.0, 1.0)
+        else:
+            r_slip = 0.0
+        self._prev_foot_tip = foot_tip.copy()
+
+        # 7. Residual magnitude penalty — squared action averaged over joints.
+        #    Keeps the RL residual as small as possible around the CPG target.
+        r_action = -np.clip(np.sum(action ** 2) / N_JOINTS, 0.0, 1.0)
+
+        # 8. Action-change penalty — squared per-step delta, averaged and scaled
+        #    by the [-2,2] delta range (2x the action range) so it lands in [-1,0].
         if self._prev_action is not None:
-            r_action_rate = -np.sum(np.square(action - self._prev_action)) * 0.002
+            dact = action - self._prev_action
+            r_action_rate = -np.clip(np.sum(dact ** 2) / (4.0 * N_JOINTS), 0.0, 1.0)
         else:
             r_action_rate = 0.0
         self._prev_action = action.copy()
 
-        # 9. Torque penalty  (paper: −1e−4dt; we: −1e−5)
-        r_torque = -np.sum(np.square(d.qfrc_actuator[:18])) * 1e-5
-
-        # 10. Collision penalty  (paper: −1dt)
-        body_z = d.xpos[self.body_id][2] if self.body_id >= 0 else 1.0
-        r_collision = -1.0 if body_z < 0.05 else 0.0
-
-        # 11. Feet air time  (paper: +1dt)
-        r_feet_air = 0.0
-        cmd_mag = abs(cmd_vx) + abs(cmd_vy) + abs(cmd_wz)
-        if cmd_mag > 0.02:   # always true: vx,vy sampled in [0.02, 0.05]
-            for i, fid in enumerate(self.foot_ids):
-                if fid >= 0:
-                    tibia_rot = d.xmat[fid].reshape(3, 3)
-                    foot_tip_world = d.xpos[fid] + tibia_rot @ FOOT_TIP_TIBIA
-                    h = foot_tip_world[2]
-                    in_contact = h < 0.015
-                    was_in_contact = self._feet_contact_prev[i]
-                    if in_contact and not was_in_contact:
-                        r_feet_air += (self._feet_air_time[i] - 0.5)
-                        self._feet_air_time[i] = 0.0
-                    elif not in_contact:
-                        self._feet_air_time[i] += dt
-                    self._feet_contact_prev[i] = in_contact
-        r_feet_air *= 1.0
-
         # Tracking error for success metric
         err_vx = abs(body_lin[0] - cmd_vx)
         err_vy = abs(body_lin[1] - cmd_vy)
-        err_wz = abs(body_ang[2] - cmd_wz)
-        norm_err = (err_vx + err_vy + err_wz) / max(cmd_mag, 0.15)
+        err_wz = abs(body_ang[2])
+        norm_err = (err_vx + err_vy + err_wz) / max(abs(cmd_vx) + abs(cmd_vy), 0.15)
         self._vel_error_sum += norm_err
         self._vel_error_count += 1
 
-        total = (r_lin_vel_x + r_lin_vel_y + r_forward + r_ang_vel + r_lin_vel_z + r_ang_vel_xy +
-                 r_joint_pos + r_joint_vel + r_joint_acc + r_action_rate +
-                 r_torque + r_feet_air + r_collision)
+        # 9. Weighted sum of the normalized terms.
+        total = (
+            REWARD_WEIGHTS["vel"] * r_vel +
+            REWARD_WEIGHTS["gravity"] * r_gravity +
+            REWARD_WEIGHTS["ang_vel"] * r_ang_vel +
+            REWARD_WEIGHTS["height"] * r_height +
+            REWARD_WEIGHTS["accel"] * r_accel +
+            REWARD_WEIGHTS["slip"] * r_slip +
+            REWARD_WEIGHTS["action"] * r_action +
+            REWARD_WEIGHTS["action_rate"] * r_action_rate
+        )
         return total
 
     def _is_terminated(self):
@@ -509,8 +498,8 @@ def main():
     os.makedirs(LOG_DIR, exist_ok=True)
 
     n_envs = args.n_envs
-    print(f"CPG+RL (paper-aligned): {n_envs} parallel envs on {os.cpu_count()} CPUs")
-    print(f"  RL → {N_CPG_PARAMS} foot-trajectory params → Hopf CPG → IK → 18 joints")
+    print(f"CPG+RL (residual policy): {n_envs} parallel envs on {os.cpu_count()} CPUs")
+    print(f"  RL → 18 joint-angle increments (±{ACTION_SCALE} rad) → CPG target + residual")
     xml_path = os.path.join(os.path.dirname(__file__), "..", "models", args.scene)
     print(f"  scene: {xml_path}")
     env = DummyVecEnv([lambda: _make_env(xml_path) for _ in range(n_envs)])
