@@ -50,9 +50,12 @@ def build_site_lines():
             name = f"rf_{az_i}_{ev_i}"
             pos = f"{_fmt(px)} {_fmt(py)} {_fmt(RING_Z)}"
             zaxis = f"{_fmt(dx)} {_fmt(dy)} {_fmt(dz)}"
+            # rgba alpha=0 hides the site marker without affecting the ray:
+            # the rangefinder casts against geoms, not against the site's own
+            # rendering color, so the sensors still output distances.
             lines.append(
                 f'<site name="{name}" pos="{pos}" '
-                f'zaxis="{zaxis}" size="{SITE_SIZE}"/>'
+                f'zaxis="{zaxis}" size="{SITE_SIZE}" rgba="0 0 0 0"/>'
             )
     return lines
 

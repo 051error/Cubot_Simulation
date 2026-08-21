@@ -1,0 +1,64 @@
+<mujoco model="cubot_hill">
+  <include file="cubot.xml"/>
+
+  <option gravity="0 0 -9.81" timestep="0.005"/>
+
+  <statistic center="0.8 0 0.15" extent="1.5"/>
+
+  <visual>
+    <headlight diffuse="0.6 0.6 0.6" ambient="0.3 0.3 0.3"/>
+    <global azimuth="130" elevation="-25"/>
+  </visual>
+
+  <asset>
+    <texture type="skybox" builtin="gradient" rgb1="0.3 0.5 0.7" rgb2="0 0 0"
+             width="512" height="512"/>
+    <texture name="groundplane" type="2d" builtin="checker" mark="edge"
+             rgb1="0.2 0.2 0.2" rgb2="0.35 0.35 0.35"
+             markrgb="0.5 0.5 0.5" width="300" height="300"/>
+    <material name="groundplane" texture="groundplane" texuniform="true"
+             texrepeat="8 8" reflectance="0.15"/>
+  </asset>
+
+  <worldbody>
+    <light pos="0 0 1.5" dir="0 0 -1" directional="true" castshadow="false"/>
+
+    <geom name="flat_ground" type="plane" size="0 0 0.05" material="groundplane" friction="1.8 0.5 0.5" condim="4"/>
+    <geom name="hill_0" type="box" size="0.15 0.15 0.1" pos="0.3500 -0.5000 -0.0937" rgba="0.629 0.629 0.629 1" friction="1.8 0.5 0.5" condim="4"/>
+    <geom name="hill_1" type="box" size="0.15 0.15 0.1" pos="0.5500 -0.5000 -0.0767" rgba="0.495 0.495 0.495 1" friction="1.8 0.5 0.5" condim="4"/>
+    <geom name="hill_2" type="box" size="0.15 0.15 0.1" pos="0.7500 -0.5000 -0.0910" rgba="0.625 0.625 0.625 1" friction="1.8 0.5 0.5" condim="4"/>
+    <geom name="hill_3" type="box" size="0.15 0.15 0.1" pos="0.9500 -0.5000 -0.0998" rgba="0.614 0.614 0.614 1" friction="1.8 0.5 0.5" condim="4"/>
+    <geom name="hill_4" type="box" size="0.15 0.15 0.1" pos="1.1500 -0.5000 -0.0761" rgba="0.544 0.544 0.544 1" friction="1.8 0.5 0.5" condim="4"/>
+    <geom name="hill_5" type="box" size="0.15 0.15 0.1" pos="1.3500 -0.5000 -0.0970" rgba="0.506 0.506 0.506 1" friction="1.8 0.5 0.5" condim="4"/>
+    <geom name="hill_6" type="box" size="0.15 0.15 0.1" pos="0.3500 -0.3000 -0.0975" rgba="0.539 0.539 0.539 1" friction="1.8 0.5 0.5" condim="4"/>
+    <geom name="hill_7" type="box" size="0.15 0.15 0.1" pos="0.5500 -0.3000 -0.0849" rgba="0.561 0.561 0.561 1" friction="1.8 0.5 0.5" condim="4"/>
+    <geom name="hill_8" type="box" size="0.15 0.15 0.1" pos="0.7500 -0.3000 -0.0701" rgba="0.609 0.609 0.609 1" friction="1.8 0.5 0.5" condim="4"/>
+    <geom name="hill_9" type="box" size="0.15 0.15 0.1" pos="0.9500 -0.3000 -0.0813" rgba="0.648 0.648 0.648 1" friction="1.8 0.5 0.5" condim="4"/>
+    <geom name="hill_10" type="box" size="0.15 0.15 0.1" pos="1.1500 -0.3000 -0.0935" rgba="0.482 0.482 0.482 1" friction="1.8 0.5 0.5" condim="4"/>
+    <geom name="hill_11" type="box" size="0.15 0.15 0.1" pos="1.3500 -0.3000 -0.0939" rgba="0.459 0.459 0.459 1" friction="1.8 0.5 0.5" condim="4"/>
+    <geom name="hill_12" type="box" size="0.15 0.15 0.1" pos="0.3500 -0.1000 -0.0996" rgba="0.553 0.553 0.553 1" friction="1.8 0.5 0.5" condim="4"/>
+    <geom name="hill_13" type="box" size="0.15 0.15 0.1" pos="0.5500 -0.1000 -0.0860" rgba="0.633 0.633 0.633 1" friction="1.8 0.5 0.5" condim="4"/>
+    <geom name="hill_14" type="box" size="0.15 0.15 0.1" pos="0.7500 -0.1000 -0.0811" rgba="0.553 0.553 0.553 1" friction="1.8 0.5 0.5" condim="4"/>
+    <geom name="hill_15" type="box" size="0.15 0.15 0.1" pos="0.9500 -0.1000 -0.0851" rgba="0.500 0.500 0.500 1" friction="1.8 0.5 0.5" condim="4"/>
+    <geom name="hill_16" type="box" size="0.15 0.15 0.1" pos="1.1500 -0.1000 -0.0996" rgba="0.488 0.488 0.488 1" friction="1.8 0.5 0.5" condim="4"/>
+    <geom name="hill_17" type="box" size="0.15 0.15 0.1" pos="1.3500 -0.1000 -0.0931" rgba="0.490 0.490 0.490 1" friction="1.8 0.5 0.5" condim="4"/>
+    <geom name="hill_18" type="box" size="0.15 0.15 0.1" pos="0.3500 0.1000 -0.0963" rgba="0.451 0.451 0.451 1" friction="1.8 0.5 0.5" condim="4"/>
+    <geom name="hill_19" type="box" size="0.15 0.15 0.1" pos="0.5500 0.1000 -0.0751" rgba="0.481 0.481 0.481 1" friction="1.8 0.5 0.5" condim="4"/>
+    <geom name="hill_20" type="box" size="0.15 0.15 0.1" pos="0.7500 0.1000 -0.0920" rgba="0.626 0.626 0.626 1" friction="1.8 0.5 0.5" condim="4"/>
+    <geom name="hill_21" type="box" size="0.15 0.15 0.1" pos="0.9500 0.1000 -0.0847" rgba="0.619 0.619 0.619 1" friction="1.8 0.5 0.5" condim="4"/>
+    <geom name="hill_22" type="box" size="0.15 0.15 0.1" pos="1.1500 0.1000 -0.0808" rgba="0.598 0.598 0.598 1" friction="1.8 0.5 0.5" condim="4"/>
+    <geom name="hill_23" type="box" size="0.15 0.15 0.1" pos="1.3500 0.1000 -0.0991" rgba="0.558 0.558 0.558 1" friction="1.8 0.5 0.5" condim="4"/>
+    <geom name="hill_24" type="box" size="0.15 0.15 0.1" pos="0.3500 0.3000 -0.0949" rgba="0.624 0.624 0.624 1" friction="1.8 0.5 0.5" condim="4"/>
+    <geom name="hill_25" type="box" size="0.15 0.15 0.1" pos="0.5500 0.3000 -0.0892" rgba="0.570 0.570 0.570 1" friction="1.8 0.5 0.5" condim="4"/>
+    <geom name="hill_26" type="box" size="0.15 0.15 0.1" pos="0.7500 0.3000 -0.0982" rgba="0.528 0.528 0.528 1" friction="1.8 0.5 0.5" condim="4"/>
+    <geom name="hill_27" type="box" size="0.15 0.15 0.1" pos="0.9500 0.3000 -0.0903" rgba="0.480 0.480 0.480 1" friction="1.8 0.5 0.5" condim="4"/>
+    <geom name="hill_28" type="box" size="0.15 0.15 0.1" pos="1.1500 0.3000 -0.0755" rgba="0.526 0.526 0.526 1" friction="1.8 0.5 0.5" condim="4"/>
+    <geom name="hill_29" type="box" size="0.15 0.15 0.1" pos="1.3500 0.3000 -0.0902" rgba="0.568 0.568 0.568 1" friction="1.8 0.5 0.5" condim="4"/>
+    <geom name="hill_30" type="box" size="0.15 0.15 0.1" pos="0.3500 0.5000 -0.0939" rgba="0.578 0.578 0.578 1" friction="1.8 0.5 0.5" condim="4"/>
+    <geom name="hill_31" type="box" size="0.15 0.15 0.1" pos="0.5500 0.5000 -0.0797" rgba="0.480 0.480 0.480 1" friction="1.8 0.5 0.5" condim="4"/>
+    <geom name="hill_32" type="box" size="0.15 0.15 0.1" pos="0.7500 0.5000 -0.0868" rgba="0.498 0.498 0.498 1" friction="1.8 0.5 0.5" condim="4"/>
+    <geom name="hill_33" type="box" size="0.15 0.15 0.1" pos="0.9500 0.5000 -0.0879" rgba="0.469 0.469 0.469 1" friction="1.8 0.5 0.5" condim="4"/>
+    <geom name="hill_34" type="box" size="0.15 0.15 0.1" pos="1.1500 0.5000 -0.0710" rgba="0.493 0.493 0.493 1" friction="1.8 0.5 0.5" condim="4"/>
+    <geom name="hill_35" type="box" size="0.15 0.15 0.1" pos="1.3500 0.5000 -0.0933" rgba="0.510 0.510 0.510 1" friction="1.8 0.5 0.5" condim="4"/>
+  </worldbody>
+</mujoco>

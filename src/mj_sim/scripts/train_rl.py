@@ -32,6 +32,12 @@ ACTION_SCALE = 0.2              # action in [-1,1] -> joint-angle increment (rad
 FOOT_TIP_TIBIA = np.array([0.00162782, 0.16052104, 0.02951023])
 EPISODE_STEPS = 200             # 4s per episode (fixed-length sparse reward)
 
+# ─── Terrain curriculum: reset() picks one scene per episode ─────────────
+TERRAIN_SCENES = ["scene.xml", "hill.xml", "stairs.xml"]  # relative to models/
+TERRAIN_PROBS  = [0.3, 0.4, 0.3]          # flat / hill / stairs
+CMD_TAU = 0.5      # command low-pass time constant (s)
+CMD_EPS = 0.005    # command-to-target closeness threshold (m/s)
+
 # ─── Reward config: every term is normalized to [0,1] (positive) or [-1,0]
 #     (penalty) before weighting, so the weights are directly comparable.
 REWARD_WEIGHTS = {
@@ -97,24 +103,41 @@ class HexapodEnv(gym.Env):
 
     metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 50}
 
-    def __init__(self, render_mode=None, xml_path=None):
+    def __init__(self, render_mode=None):
         super().__init__()
-        self.model = mujoco.MjModel.from_xml_path(xml_path or MODEL_XML)
-        self.data   = mujoco.MjData(self.model)
 
         self.foot_names = [
             "tibia_rf", "tibia_rm", "tibia_rr",
             "tibia_lf", "tibia_lm", "tibia_lr",
         ]
-        self.foot_ids = [mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, n)
-                         for n in self.foot_names]
+
+        # Preload the three terrain scenes (all include cubot.xml, so body/foot
+        # ids are identical across them) so reset() can switch scenes without
+        # re-parsing XML every episode.
+        models_dir = os.path.dirname(MODEL_XML)
+        self._terrain_models = [
+            mujoco.MjModel.from_xml_path(os.path.join(models_dir, s))
+            for s in TERRAIN_SCENES]
+        self._terrain_datas = [mujoco.MjData(m) for m in self._terrain_models]
+        self._terrain_body_ids = [
+            mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, "MP_BODY")
+            for m in self._terrain_models]
+        self._terrain_foot_ids = [
+            [mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, n) for n in self.foot_names]
+            for m in self._terrain_models]
+
+        # Active model/data, swapped by reset(); start on the flat scene.
+        self._terrain_idx = 0
+        self.model = self._terrain_models[0]
+        self.data = self._terrain_datas[0]
+        self.body_id = self._terrain_body_ids[0]
+        self.foot_ids = self._terrain_foot_ids[0]
 
         self.observation_space = spaces.Box(
             low=-np.inf, high=np.inf, shape=(OBS_DIM,), dtype=np.float32)
         self.action_space = spaces.Box(
             low=-1.0, high=1.0, shape=(N_JOINTS,), dtype=np.float32)
 
-        self.body_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, "MP_BODY")
         self.render_mode = render_mode
         self.viewer = None
 
@@ -135,26 +158,43 @@ class HexapodEnv(gym.Env):
         self._prev_foot_tip = None     # foot-tip world positions at previous step (slip term)
         self._ep_reward_sum = 0.0   # accumulated reward for fixed-length episode
 
-        # Success metric
-        self._vel_error_sum = 0.0
-        self._vel_error_count = 0
+        # Stability metric (mean body tilt from vertical, radians)
+        self._tilt_sum = 0.0
+        self._tilt_count = 0
 
         # IK failure counter (for debugging)
         self._ik_fails = 0
 
-    def _sample_cmd(self):
-        sign = lambda: 1 if np.random.random() < 0.5 else -1
-        # Command range aligned with the halved /upper_ctrl limits:
-        # linear ±0.05 m/s. No angular command — rotation is delegated to the
-        # dedicated TURN mode, so the yaw command is always zero.
-        self.cmd = np.array([
-            np.random.uniform(0.02, 0.05) * sign(), # vx: bidirectional [2, 5] cm/s
-            np.random.uniform(0.02, 0.05) * sign(), # vy: bidirectional [2, 5] cm/s
-            0.0,                                    # wz: rotation handled by TURN mode
+    def _sample_target(self):
+        """Sample a random command target (bidirectional [0.02, 0.05] m/s, wz=0)."""
+        sign = lambda: 1 if self.np_random.random() < 0.5 else -1
+        # Command range aligned with the halved /upper_ctrl limits: linear
+        # ±0.05 m/s. No angular command — rotation is delegated to the dedicated
+        # TURN mode, so the yaw command is always zero.
+        return np.array([
+            self.np_random.uniform(0.02, 0.05) * sign(),  # vx
+            self.np_random.uniform(0.02, 0.05) * sign(),  # vy
+            0.0,                                           # wz
         ])
+
+    def _update_cmd(self):
+        """Smoothly approach the random target via a first-order low-pass filter."""
+        alpha = 1.0 - np.exp(-CTRL_DT / CMD_TAU)
+        self.cmd[:2] += alpha * (self._cmd_target[:2] - self.cmd[:2])
+        if np.linalg.norm(self.cmd[:2] - self._cmd_target[:2]) < CMD_EPS:
+            self._cmd_target = self._sample_target()
 
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
+
+        # Pick a terrain scene per episode (flat 0.3 / hill 0.4 / stairs 0.3).
+        idx = self.np_random.choice(len(TERRAIN_SCENES), p=TERRAIN_PROBS)
+        self._terrain_idx = int(idx)
+        self.model = self._terrain_models[idx]
+        self.data = self._terrain_datas[idx]
+        self.body_id = self._terrain_body_ids[idx]
+        self.foot_ids = self._terrain_foot_ids[idx]
+
         mujoco.mj_resetData(self.model, self.data)
         # Start from the crouched "home" keyframe (if defined) instead of the
         # fully-extended default pose. Keeps foot tips on the ground.
@@ -168,13 +208,15 @@ class HexapodEnv(gym.Env):
         self._prev_body_ang = None
         self._prev_body_z = None
         self._prev_foot_tip = None
-        self._vel_error_sum = 0.0
-        self._vel_error_count = 0
+        self._tilt_sum = 0.0
+        self._tilt_count = 0
         self._ep_reward_sum = 0.0
         self.cpg.reset()
         self._q_target = JOINT_REF.copy()
 
-        self._sample_cmd()
+        # Smooth random command: start from rest, approach a random target.
+        self.cmd = np.zeros(3, dtype=np.float32)
+        self._cmd_target = self._sample_target()
         return self._get_obs(), {}
 
     def step(self, action):
@@ -185,6 +227,8 @@ class HexapodEnv(gym.Env):
         action = np.asarray(action, dtype=np.float32)
         action = np.clip(action, -1.0, 1.0)
         self._current_action = action.copy()
+
+        self._update_cmd()   # smooth the random command toward its target
 
         for _ in range(SIM_STEPS_PER_CTRL):
             q_target = compute_joint_targets(self.cpg, self.traj,
@@ -339,13 +383,10 @@ class HexapodEnv(gym.Env):
             r_action_rate = 0.0
         self._prev_action = action.copy()
 
-        # Tracking error for success metric
-        err_vx = abs(body_lin[0] - cmd_vx)
-        err_vy = abs(body_lin[1] - cmd_vy)
-        err_wz = abs(body_ang[2])
-        norm_err = (err_vx + err_vy + err_wz) / max(abs(cmd_vx) + abs(cmd_vy), 0.15)
-        self._vel_error_sum += norm_err
-        self._vel_error_count += 1
+        # Stability metric: body tilt angle from vertical (world -z).
+        tilt = np.arccos(np.clip(-gb[2], -1.0, 1.0))
+        self._tilt_sum += tilt
+        self._tilt_count += 1
 
         # 9. Weighted sum of the normalized terms.
         total = (
@@ -371,10 +412,11 @@ class HexapodEnv(gym.Env):
         return upright < 0.3 or body_z < 0.05
 
     @property
-    def tracking_error(self):
-        if self._vel_error_count == 0:
-            return float('inf')
-        return self._vel_error_sum / self._vel_error_count
+    def mean_tilt(self):
+        # Mean body tilt angle from vertical (radians) over the episode.
+        if self._tilt_count == 0:
+            return 0.0
+        return self._tilt_sum / self._tilt_count
 
     def render(self):
         if self.render_mode == "human":
@@ -394,11 +436,10 @@ class HexapodEnv(gym.Env):
 # ══════════════════════════════════════════════════════════════════════════
 
 class EvalAndSaveCallback(BaseCallback):
-    def __init__(self, eval_env, save_freq, n_eval_episodes=5, verbose=1, log_freq=5000):
+    def __init__(self, eval_env, save_freq, n_eval_episodes=5, verbose=0):
         super().__init__(verbose)
         self.eval_env = eval_env
         self.save_freq = save_freq
-        self.log_freq = log_freq
         self.n_eval_episodes = n_eval_episodes
         self.best_mean_reward = -np.inf
         self.writer = None
@@ -407,23 +448,8 @@ class EvalAndSaveCallback(BaseCallback):
         self.writer = SummaryWriter(log_dir=os.path.join(LOG_DIR, f"ppo_{int(time.time())}"))
 
     def _on_step(self):
-        # Progress log every log_freq steps (lightweight, no eval)
-        if self.n_calls % self.log_freq == 0:
-            buf = getattr(self.model, 'ep_info_buffer', None)
-            if buf is not None and len(buf) > 0:
-                # Convert deque to list for slicing
-                buf_list = list(buf)
-                recent_n = min(20, len(buf_list))
-                recent = buf_list[-recent_n:]
-                avg_rew = np.mean([e['r'] for e in recent])
-                avg_len = np.mean([e['l'] for e in recent])
-                print(f"[{self.n_calls:>8d}] train_ep_rew(20ep)={avg_rew:+.3f}  "
-                      f"ep_len={avg_len:.0f}")
-                if self.writer:
-                    self.writer.add_scalar("train/ep_rew_mean", avg_rew, self.n_calls)
-
         if self.n_calls % self.save_freq == 0:
-            rewards, successes, tracking_errors = [], 0, []
+            rewards, tilts = [], []
             for _ in range(self.n_eval_episodes):
                 obs, _ = self.eval_env.reset()
                 ep_reward = 0.0
@@ -433,18 +459,13 @@ class EvalAndSaveCallback(BaseCallback):
                     obs, r, terminated, truncated, _ = self.eval_env.step(action)
                     ep_reward += r
                 rewards.append(ep_reward)
-                vel_err = self.eval_env.unwrapped.tracking_error
-                tracking_errors.append(vel_err)
-                if not terminated and vel_err < 0.6:
-                    successes += 1
+                tilts.append(self.eval_env.unwrapped.mean_tilt)
 
             mean_r = np.mean(rewards)
-            mean_track_err = np.mean(tracking_errors)
-            success_rate = successes / self.n_eval_episodes
+            mean_tilt_deg = np.degrees(np.mean(tilts))
 
             print(f"[{self.n_calls:>8d} steps]  mean_reward={mean_r:+.3f}  "
-                  f"success={success_rate:.1%}  "
-                  f"track_err={mean_track_err:.3f}  best={self.best_mean_reward:+.3f}")
+                  f"tilt={mean_tilt_deg:.2f} deg  best={self.best_mean_reward:+.3f}")
 
             os.makedirs(CKPT_DIR, exist_ok=True)
             self.model.save(LATEST_PATH)
@@ -456,8 +477,7 @@ class EvalAndSaveCallback(BaseCallback):
 
             if self.writer:
                 self.writer.add_scalar("eval/mean_reward", mean_r, self.n_calls)
-                self.writer.add_scalar("eval/success_rate", success_rate, self.n_calls)
-                self.writer.add_scalar("eval/mean_tracking_error", mean_track_err, self.n_calls)
+                self.writer.add_scalar("eval/mean_tilt", mean_tilt_deg, self.n_calls)
                 self.writer.add_scalar("eval/best_reward", self.best_mean_reward, self.n_calls)
 
         return True
@@ -479,8 +499,8 @@ def find_latest_checkpoint():
     return ckpts[-1] if ckpts else None
 
 
-def _make_env(xml_path=None):
-    return Monitor(HexapodEnv(xml_path=xml_path))
+def _make_env():
+    return Monitor(HexapodEnv())
 
 
 def main():
@@ -491,8 +511,6 @@ def main():
     parser.add_argument("--save_freq",   type=int, default=5_000)
     parser.add_argument("--resume", action="store_true", default=True)
     parser.add_argument("--render", action="store_true")
-    parser.add_argument("--scene", default="terrain.xml",
-                        help="model scene in models/ (e.g. scene.xml, terrain.xml)")
     args = parser.parse_args()
 
     os.makedirs(LOG_DIR, exist_ok=True)
@@ -500,11 +518,10 @@ def main():
     n_envs = args.n_envs
     print(f"CPG+RL (residual policy): {n_envs} parallel envs on {os.cpu_count()} CPUs")
     print(f"  RL → 18 joint-angle increments (±{ACTION_SCALE} rad) → CPG target + residual")
-    xml_path = os.path.join(os.path.dirname(__file__), "..", "models", args.scene)
-    print(f"  scene: {xml_path}")
-    env = DummyVecEnv([lambda: _make_env(xml_path) for _ in range(n_envs)])
+    print(f"  terrain: {TERRAIN_SCENES} (probs {TERRAIN_PROBS})")
+    env = DummyVecEnv([lambda: _make_env() for _ in range(n_envs)])
     # NOTE: SubprocVecEnv hangs with EGL backend; use DummyVecEnv instead
-    eval_env = _make_env(xml_path)
+    eval_env = _make_env()
 
     policy_kwargs = dict(net_arch=dict(pi=[128, 64], vf=[128, 64]))
 
@@ -513,7 +530,7 @@ def main():
         print(f"[Resume] Loading checkpoint: {ckpt_path}")
         model = PPO.load(ckpt_path, env=env, tensorboard_log=LOG_DIR)
     else:
-        model = PPO("MlpPolicy", env, verbose=1,
+        model = PPO("MlpPolicy", env, verbose=0,
                     n_steps=4096, batch_size=args.batch_size,
                     learning_rate=3e-4, ent_coef=0.01,
                     policy_kwargs=policy_kwargs,
@@ -522,7 +539,7 @@ def main():
     eval_cb = EvalAndSaveCallback(eval_env, save_freq=args.save_freq, n_eval_episodes=3)
 
     model.learn(total_timesteps=args.total_steps, callback=eval_cb,
-                reset_num_timesteps=(ckpt_path is None))
+                reset_num_timesteps=(ckpt_path is None), progress_bar=True)
 
     final = os.path.join(CKPT_DIR, "final_model.zip")
     model.save(final)

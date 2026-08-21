@@ -226,12 +226,13 @@ class MujocoSimulator(Node):
         with viewer.lock():
             cam = viewer.cam
             if self.cam_mode == self.CAM_TRACKING:
-                # Full follow: fixed offset behind/above the body, turning with
-                # it. MuJoCo's native mjCAMERA_TRACKING only follows the body
-                # COM at a fixed world orientation, so the heading is applied by
-                # rotating a body-frame view direction into world space.
+                # Full follow: camera directly behind the body, looking along
+                # the robot's forward direction. MuJoCo's native
+                # mjCAMERA_TRACKING only follows the body COM at a fixed world
+                # orientation, so the heading is applied by rotating a
+                # body-frame view direction into world space.
                 pos, R = self._body_pose()
-                az, el = self._spherical_to_world(R, 135.0, -25.0)
+                az, el = self._spherical_to_world(R, 180.0, -25.0)
                 cam.type = mujoco.mjtCamera.mjCAMERA_FREE
                 cam.lookat[:] = pos + R @ np.array([0.0, 0.0, 0.15])
                 cam.azimuth = az
