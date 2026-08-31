@@ -34,11 +34,12 @@ class MujocoSimulator(Node):
         2: "CAM: overhead (pos only, 1 to switch)",
     }
 
-    def __init__(self):
+    def __init__(self, scene="terrain.xml", headless=False):
         super().__init__("mujoco_simulator")
 
+        self.headless = headless
         mj_share = get_package_share_directory("mj_sim")
-        scene_path = os.path.join(mj_share, "models", "terrain.xml")
+        scene_path = os.path.join(mj_share, "models", scene)
         self.get_logger().info(f"Loading: {scene_path}")
 
         self.model = mujoco.MjModel.from_xml_path(scene_path)
@@ -249,7 +250,39 @@ class MujocoSimulator(Node):
                 # Free mode: only force the type so the user can drag the camera.
                 cam.type = mujoco.mjtCamera.mjCAMERA_FREE
 
+    def _step_physics(self):
+        """Apply the latest command and advance physics one 5 ms timestep."""
+        if self.receive_data:
+            self.data.ctrl[:] = self.cmd_buffer
+        else:
+            # Backspace -> mj_resetData resets qpos to qpos0 (straight legs) and
+            # zeroes ctrl. Detect that exact reset signature and restore the
+            # crouch once. Do NOT re-assert qpos/ctrl every step, or the right-
+            # hand UI panel freezes (manual joint edits get overwritten).
+            if (np.allclose(self.data.qpos[7:25], 0.0) and
+                    np.allclose(self.data.ctrl, 0.0)):
+                self.data.qpos[7:25] = self.crouch_qpos
+                self.data.ctrl[:] = self.home_ctrl
+        last_ctrl = Float64MultiArray()
+        last_ctrl.data = self.data.ctrl
+        self.last_ctrl_pub.publish(last_ctrl)
+        mujoco.mj_step(self.model, self.data)
+
+    def _run_headless(self):
+        """Run the fixed-timestep physics loop without the viewer (automated tests)."""
+        self.get_logger().info("Headless simulation running.")
+        while self.viewer_running and rclpy.ok():
+            step_start = time.time()
+            self._step_physics()
+            elapsed = time.time() - step_start
+            if elapsed < 0.005:
+                time.sleep(0.005 - elapsed)
+        self.get_logger().info("Simulation ended.")
+
     def simulation_loop(self):
+        if self.headless:
+            self._run_headless()
+            return
         with mujoco.viewer.launch_passive(
             self.model, self.data,
             key_callback=self._on_key,
@@ -267,22 +300,7 @@ class MujocoSimulator(Node):
 
             while self.viewer_running and rclpy.ok():
                 step_start = time.time()
-                if self.receive_data:
-                    self.data.ctrl[:] = self.cmd_buffer
-                else:
-                    # Backspace -> mj_resetData resets qpos to qpos0 (straight
-                    # legs) and zeroes ctrl. Detect that exact reset signature and
-                    # restore the crouch once. Do NOT re-assert qpos/ctrl every
-                    # step, or the right-hand UI panel freezes (manual joint edits
-                    # get overwritten each frame).
-                    if (np.allclose(self.data.qpos[7:25], 0.0) and
-                            np.allclose(self.data.ctrl, 0.0)):
-                        self.data.qpos[7:25] = self.crouch_qpos
-                        self.data.ctrl[:] = self.home_ctrl
-                last_ctrl = Float64MultiArray()
-                last_ctrl.data = self.data.ctrl
-                self.last_ctrl_pub.publish(last_ctrl)
-                mujoco.mj_step(self.model, self.data)
+                self._step_physics()
 
                 # Apply the camera follow mode, then draw the overlay.
                 self._apply_camera(viewer)
@@ -305,9 +323,22 @@ class MujocoSimulator(Node):
 
 
 def main():
-    
+    # Parse custom (non-ROS) flags before rclpy sees argv: --scene <xml> selects
+    # the MJCF scene, --headless runs physics without the viewer (for tests).
+    scene = "terrain.xml"
+    headless = False
+    argv = list(sys.argv)
+    if "--scene" in argv:
+        i = argv.index("--scene")
+        scene = argv[i + 1]
+        del argv[i:i + 2]
+    if "--headless" in argv:
+        headless = True
+        argv.remove("--headless")
+    sys.argv = argv
+
     rclpy.init()
-    node = MujocoSimulator()
+    node = MujocoSimulator(scene=scene, headless=headless)
     sim_thread = threading.Thread(target=node.simulation_loop, daemon=True)
     sim_thread.start()
     try:

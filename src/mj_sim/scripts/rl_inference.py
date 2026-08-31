@@ -96,7 +96,10 @@ class RLPolicyNode(Node):
     def cmd_callback(self, msg: UpCmd):
         # RL handles only the left stick (linear_x/y). Rotation is delegated to
         # the dedicated TURN mode, so the right stick (angular_z) is ignored here.
-        self.cmd = np.array([msg.linear_x, msg.linear_y, 0.0], dtype=np.float32)
+        # Invert to match NORMAL mode (robot_ctrl.cpp: bvx=-vx, bvy=-vy): the Xbox
+        # stick-forward is axes[1]<0, so linear_x is negative for forward; without
+        # this inversion RL mode drives in reverse of the stick.
+        self.cmd = np.array([-msg.linear_x, -msg.linear_y, 0.0], dtype=np.float32)
 
     def state_callback(self, msg: LowState):
         self._msg_count += 1
@@ -140,6 +143,12 @@ class RLPolicyNode(Node):
 
 
 def main():
+    # Lower this node's CPU priority so its CPG+IK+PPO load does not starve the
+    # simulator's physics loop (which destabilises NORMAL/RL motion).
+    try:
+        os.nice(10)
+    except PermissionError:
+        pass
     rclpy.init()
     node = RLPolicyNode()
     rclpy.spin(node)

@@ -4,7 +4,7 @@
 Pipeline: RL policy (18D residual) + C++ tripod CPG target → IK → MuJoCo.
 """
 
-import os, sys, time, argparse, glob
+import os, sys, argparse, glob, shutil
 import numpy as np
 import mujoco
 import gymnasium as gym
@@ -17,10 +17,11 @@ from torch.utils.tensorboard import SummaryWriter
 
 # ─── Config ──────────────────────────────────────────────────────────────
 MODEL_XML = os.path.join(os.path.dirname(__file__), "..", "models", "scene.xml")
-LOG_DIR    = os.path.join(os.path.dirname(__file__), "..", "rl_logs")
-CKPT_DIR   = os.path.join(os.path.dirname(__file__), "..", "rl_checkpoints")
-BEST_PATH  = os.path.join(CKPT_DIR, "best_model.zip")
-LATEST_PATH = os.path.join(CKPT_DIR, "latest_model.zip")
+LOG_DIR      = os.path.join(os.path.dirname(__file__), "..", "rl_logs")
+EVAL_LOG_DIR = os.path.join(LOG_DIR, "eval")  # fixed dir: eval curves append across resumes
+CKPT_DIR     = os.path.join(os.path.dirname(__file__), "..", "rl_checkpoints")
+BEST_PATH    = os.path.join(CKPT_DIR, "best_model.zip")
+LATEST_PATH  = os.path.join(CKPT_DIR, "latest_model.zip")
 
 N_LEGS  = 6
 N_JOINTS = N_LEGS * 3          # 18
@@ -33,32 +34,46 @@ FOOT_TIP_TIBIA = np.array([0.00162782, 0.16052104, 0.02951023])
 EPISODE_STEPS = 200             # 4s per episode (fixed-length sparse reward)
 
 # ─── Terrain curriculum: reset() picks one scene per episode ─────────────
-TERRAIN_SCENES = ["scene.xml", "hill.xml", "stairs.xml"]  # relative to models/
-TERRAIN_PROBS  = [0.3, 0.4, 0.3]          # flat / hill / stairs
+# Flat 0.3 / hill 0.7 (stairs removed). Pass --fixed_terrain to pin every
+# episode to the flat scene (for debugging / ablations).
+TERRAIN_SCENES = ["scene.xml", "hill.xml"]  # relative to models/
+TERRAIN_PROBS  = [0.3, 0.7]                 # flat / hill
 CMD_TAU = 0.5      # command low-pass time constant (s)
 CMD_EPS = 0.005    # command-to-target closeness threshold (m/s)
 
 # ─── Reward config: every term is normalized to [0,1] (positive) or [-1,0]
 #     (penalty) before weighting, so the weights are directly comparable.
 REWARD_WEIGHTS = {
-    "vel":         1.0,   # 1. velocity tracking
-    "gravity":     2.0,   # 2. IMU gravity deviation (main stability)
-    "ang_vel":     1.5,   # 3. angular-velocity stability
-    "height":      0.5,   # 4. body height stability (bobbing)
-    "accel":       0.5,   # 5. body acceleration penalty (linear + angular)
-    "slip":        0.5,   # 6. stance-foot slip penalty
-    "action":      0.05,  # 7. residual magnitude penalty
-    "action_rate": 0.02,  # 8. action-change penalty
+    "vel":         1.0,   # 1. velocity tracking             (r_track)
+    "gravity":     0.75,  # 2. IMU gravity deviation          (r_stability)
+    "ang_vel":     0.1,   # 3. angular-velocity stability     (r_track)
+    "height":      0.75,  # 4. body height stability (bobbing, r_stability)
+    "accel":       0.5,   # 5. body acceleration penalty      (r_stability)
+    "slip":        0.5,   # 6. stance-foot slip penalty       (r_stability)
+    "action":      0.3,   # 7. residual magnitude penalty     (r_stability)
+    "action_rate": 0.05,  # 8. action-change penalty          (r_stability)
 }
+# Keys accumulated into reward_terms for TensorBoard: the 8 raw weighted
+# components plus the two aggregates (r_track / r_stability) that r_total is
+# built from, so TensorBoard can explain the total reward.
+REWARD_TERM_KEYS = list(REWARD_WEIGHTS) + ["track", "stability"]
+
 REWARD_SIGMA = {
     "vel":        0.05,              # velocity error scale (m/s)
-    "gravity":    np.sqrt(0.2),      # gravity-deviation scale (dimensionless)
-    "ang_vel":    0.5,               # angular-velocity scale (rad/s)
+    "gravity":    0.08,              # gravity-deviation scale (~4.6deg tilt -> r=e^-1)
+    "ang_vel":    0.3,               # angular-velocity scale (rad/s; 0.3rad/s -> e^-1)
     "height_vel": 0.05,              # body-height rate scale (m/s)
     "accel_lin":  2.0,               # linear-acceleration scale (m/s^2)
     "accel_ang":  2.0,               # angular-acceleration scale (rad/s^2)
     "slip":       0.1,               # foot slip-speed scale (m/s)
 }
+# Additive r_total lands ~0.44/step (vel 0.34 + ang_vel 0.086 + 0.5*stability),
+# so a 200-step episode returns ~89 before scaling. Dividing by 0.8 brings the
+# return to ~110, inside the range where the value function fits stably.
+REWARD_SCALE = 0.8
+
+# Stability weight in the additive reward r_total = r_track + LAMBDA * r_stability.
+LAMBDA_STABILITY = 0.5
 
 # Observation layout (must match rl_inference.py exactly):
 #   projected_gravity(3) + body_vel(3) + joint_pos(18) + joint_vel(18)
@@ -66,7 +81,10 @@ REWARD_SIGMA = {
 #   + height_map(72) = 159
 OBS_DIM = 3 + 3 + 18 + 18 + 6 + 3 + 18 + 18 + 72  # 159
 
-from cpg_gait import TripodGait, FootTrajectory, compute_joint_targets, JOINT_REF
+from cpg_gait import (
+    TripodGait, FootTrajectory, compute_joint_targets, JOINT_REF,
+    STRIDE_X, STRIDE_Y, SPEED_REF,
+)
 from height_map import rangefinder_to_height_map
 
 
@@ -103,8 +121,9 @@ class HexapodEnv(gym.Env):
 
     metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 50}
 
-    def __init__(self, render_mode=None):
+    def __init__(self, render_mode=None, fixed_terrain=False):
         super().__init__()
+        self.fixed_terrain = fixed_terrain
 
         self.foot_names = [
             "tibia_rf", "tibia_rm", "tibia_rr",
@@ -156,11 +175,13 @@ class HexapodEnv(gym.Env):
         self._prev_body_ang = None     # body angular velocity at previous step (accel term)
         self._prev_body_z = None       # body z at previous step (height-rate term)
         self._prev_foot_tip = None     # foot-tip world positions at previous step (slip term)
-        self._ep_reward_sum = 0.0   # accumulated reward for fixed-length episode
 
         # Stability metric (mean body tilt from vertical, radians)
         self._tilt_sum = 0.0
         self._tilt_count = 0
+
+        # Per-episode weighted-reward-term accumulator (for TensorBoard logging)
+        self._reward_terms = {k: 0.0 for k in REWARD_TERM_KEYS}
 
         # IK failure counter (for debugging)
         self._ik_fails = 0
@@ -187,8 +208,12 @@ class HexapodEnv(gym.Env):
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
 
-        # Pick a terrain scene per episode (flat 0.3 / hill 0.4 / stairs 0.3).
-        idx = self.np_random.choice(len(TERRAIN_SCENES), p=TERRAIN_PROBS)
+        # Pick a terrain scene per episode. With fixed_terrain the flat scene
+        # (idx 0) is used every episode; otherwise sample by TERRAIN_PROBS.
+        if self.fixed_terrain:
+            idx = 0
+        else:
+            idx = self.np_random.choice(len(TERRAIN_SCENES), p=TERRAIN_PROBS)
         self._terrain_idx = int(idx)
         self.model = self._terrain_models[idx]
         self.data = self._terrain_datas[idx]
@@ -210,7 +235,7 @@ class HexapodEnv(gym.Env):
         self._prev_foot_tip = None
         self._tilt_sum = 0.0
         self._tilt_count = 0
-        self._ep_reward_sum = 0.0
+        self._reward_terms = {k: 0.0 for k in REWARD_TERM_KEYS}
         self.cpg.reset()
         self._q_target = JOINT_REF.copy()
 
@@ -241,14 +266,10 @@ class HexapodEnv(gym.Env):
         self.step_count += 1
 
         obs = self._get_obs()
-        step_reward = self._compute_reward()
-        self._ep_reward_sum += step_reward
+        reward = self._compute_reward() / REWARD_SCALE
 
-        # Fixed-length episode: no early termination. The episode's cumulative
-        # reward is delivered as a single sparse signal on the final step.
         terminated = False
         truncated = self.step_count >= EPISODE_STEPS
-        reward = self._ep_reward_sum if truncated else 0.0
         return obs, reward, terminated, truncated, {}
 
     def _get_obs(self):
@@ -314,8 +335,21 @@ class HexapodEnv(gym.Env):
         action = self._current_action
 
         # 1. Velocity tracking — Gaussian kernel over the 2D horizontal velocity
-        #    error (yaw cmd is zero). 1.0 = exact match, ->0 far off.
-        err_v = np.array([body_lin[0] - cmd_vx, body_lin[1] - cmd_vy])
+        #    error (yaw cmd is zero). 1.0 = exact match, ->0 far off. The
+        #    reference is the CPG's intended body velocity (stride x cadence),
+        #    not the raw cmd: the CPG maps cmd to ~3.3x that speed, so a raw-cmd
+        #    reference would force the RL residual to brake 3x every step. The
+        #    omega/0.15/+4 below must stay in sync with compute_joint_targets.
+        cmd_speed = np.hypot(cmd_vx, cmd_vy)
+        if cmd_speed > 1e-6:
+            omega = 2.0 * np.pi * cmd_speed / 0.15 + 4.0
+            g = min(cmd_speed / SPEED_REF, 1.0)
+            ref_vx = 4.0 * STRIDE_X * g * (cmd_vx / cmd_speed) * omega / (2.0 * np.pi)
+            ref_vy = 4.0 * STRIDE_Y * g * (cmd_vy / cmd_speed) * omega / (2.0 * np.pi)
+        else:
+            ref_vx = 0.0
+            ref_vy = 0.0
+        err_v = np.array([body_lin[0] - ref_vx, body_lin[1] - ref_vy])
         r_vel = np.exp(-np.sum(err_v ** 2) / REWARD_SIGMA["vel"] ** 2)
 
         # 2. IMU gravity deviation (main stability) — Gaussian kernel over the
@@ -388,18 +422,31 @@ class HexapodEnv(gym.Env):
         self._tilt_sum += tilt
         self._tilt_count += 1
 
-        # 9. Weighted sum of the normalized terms.
-        total = (
-            REWARD_WEIGHTS["vel"] * r_vel +
-            REWARD_WEIGHTS["gravity"] * r_gravity +
-            REWARD_WEIGHTS["ang_vel"] * r_ang_vel +
-            REWARD_WEIGHTS["height"] * r_height +
-            REWARD_WEIGHTS["accel"] * r_accel +
-            REWARD_WEIGHTS["slip"] * r_slip +
-            REWARD_WEIGHTS["action"] * r_action +
-            REWARD_WEIGHTS["action_rate"] * r_action_rate
-        )
-        return total
+        # 9. Weighted components, accumulated per term so each contribution can
+        #    be logged to TensorBoard (they no longer sum to the total reward).
+        weighted = {
+            "vel":         REWARD_WEIGHTS["vel"] * r_vel,
+            "gravity":     REWARD_WEIGHTS["gravity"] * r_gravity,
+            "ang_vel":     REWARD_WEIGHTS["ang_vel"] * r_ang_vel,
+            "height":      REWARD_WEIGHTS["height"] * r_height,
+            "accel":       REWARD_WEIGHTS["accel"] * r_accel,
+            "slip":        REWARD_WEIGHTS["slip"] * r_slip,
+            "action":      REWARD_WEIGHTS["action"] * r_action,
+            "action_rate": REWARD_WEIGHTS["action_rate"] * r_action_rate,
+        }
+        for k, v in weighted.items():
+            self._reward_terms[k] += v
+
+        # r_total = r_track + LAMBDA * r_stability (additive). Stability is a
+        # direct penalty/reward on top of tracking, so it keeps a gradient even
+        # when tracking is weak. The CPG always drives motion, so the robot
+        # cannot stand still to exploit a good posture.
+        r_track = weighted["vel"] + weighted["ang_vel"]
+        r_stability = (weighted["gravity"] + weighted["height"] + weighted["accel"]
+                       + weighted["slip"] + weighted["action"] + weighted["action_rate"])
+        self._reward_terms["track"] += r_track
+        self._reward_terms["stability"] += r_stability
+        return r_track + LAMBDA_STABILITY * r_stability
 
     def _is_terminated(self):
         # Unused in fixed-length mode (step() always returns terminated=False);
@@ -417,6 +464,11 @@ class HexapodEnv(gym.Env):
         if self._tilt_count == 0:
             return 0.0
         return self._tilt_sum / self._tilt_count
+
+    @property
+    def reward_terms(self):
+        # Per-episode sum of each weighted reward term (for TensorBoard).
+        return dict(self._reward_terms)
 
     def render(self):
         if self.render_mode == "human":
@@ -445,11 +497,16 @@ class EvalAndSaveCallback(BaseCallback):
         self.writer = None
 
     def _on_training_start(self):
-        self.writer = SummaryWriter(log_dir=os.path.join(LOG_DIR, f"ppo_{int(time.time())}"))
+        # Fixed directory (no timestamp) so a resume appends to the same
+        # tfevents stream. The x-axis below uses the global num_timesteps, so
+        # eval curves continue from the last step instead of restarting at 0.
+        self.writer = SummaryWriter(log_dir=EVAL_LOG_DIR)
 
     def _on_step(self):
         if self.n_calls % self.save_freq == 0:
+            step = self.model.num_timesteps   # global counter, survives resume
             rewards, tilts = [], []
+            term_means = {k: [] for k in REWARD_TERM_KEYS}
             for _ in range(self.n_eval_episodes):
                 obs, _ = self.eval_env.reset()
                 ep_reward = 0.0
@@ -460,11 +517,13 @@ class EvalAndSaveCallback(BaseCallback):
                     ep_reward += r
                 rewards.append(ep_reward)
                 tilts.append(self.eval_env.unwrapped.mean_tilt)
+                for k, v in self.eval_env.unwrapped.reward_terms.items():
+                    term_means[k].append(v)
 
             mean_r = np.mean(rewards)
             mean_tilt_deg = np.degrees(np.mean(tilts))
 
-            print(f"[{self.n_calls:>8d} steps]  mean_reward={mean_r:+.3f}  "
+            print(f"[{step:>8d} steps]  mean_reward={mean_r:+.3f}  "
                   f"tilt={mean_tilt_deg:.2f} deg  best={self.best_mean_reward:+.3f}")
 
             os.makedirs(CKPT_DIR, exist_ok=True)
@@ -476,9 +535,11 @@ class EvalAndSaveCallback(BaseCallback):
                 print(f"  >>> New BEST model saved: reward={mean_r:+.3f}")
 
             if self.writer:
-                self.writer.add_scalar("eval/mean_reward", mean_r, self.n_calls)
-                self.writer.add_scalar("eval/mean_tilt", mean_tilt_deg, self.n_calls)
-                self.writer.add_scalar("eval/best_reward", self.best_mean_reward, self.n_calls)
+                self.writer.add_scalar("eval/mean_reward", mean_r, step)
+                self.writer.add_scalar("eval/mean_tilt", mean_tilt_deg, step)
+                self.writer.add_scalar("eval/best_reward", self.best_mean_reward, step)
+                for k, vals in term_means.items():
+                    self.writer.add_scalar(f"eval/term_{k}", np.mean(vals), step)
 
         return True
 
@@ -499,8 +560,8 @@ def find_latest_checkpoint():
     return ckpts[-1] if ckpts else None
 
 
-def _make_env():
-    return Monitor(HexapodEnv())
+def _make_env(fixed_terrain=False):
+    return Monitor(HexapodEnv(fixed_terrain=fixed_terrain))
 
 
 def main():
@@ -510,6 +571,8 @@ def main():
     parser.add_argument("--n_envs",      type=int, default=4)
     parser.add_argument("--save_freq",   type=int, default=5_000)
     parser.add_argument("--resume", action="store_true", default=True)
+    parser.add_argument("--fixed_terrain", action="store_true",
+                        help="Pin every episode to the flat scene (disable terrain randomization)")
     parser.add_argument("--render", action="store_true")
     args = parser.parse_args()
 
@@ -518,28 +581,42 @@ def main():
     n_envs = args.n_envs
     print(f"CPG+RL (residual policy): {n_envs} parallel envs on {os.cpu_count()} CPUs")
     print(f"  RL → 18 joint-angle increments (±{ACTION_SCALE} rad) → CPG target + residual")
-    print(f"  terrain: {TERRAIN_SCENES} (probs {TERRAIN_PROBS})")
-    env = DummyVecEnv([lambda: _make_env() for _ in range(n_envs)])
+    print(f"  terrain: {TERRAIN_SCENES} (probs {TERRAIN_PROBS})"
+          f"{' (fixed flat)' if args.fixed_terrain else ''}")
+    env = DummyVecEnv([lambda: _make_env(args.fixed_terrain) for _ in range(n_envs)])
     # NOTE: SubprocVecEnv hangs with EGL backend; use DummyVecEnv instead
-    eval_env = _make_env()
+    eval_env = _make_env(args.fixed_terrain)
 
-    policy_kwargs = dict(net_arch=dict(pi=[128, 64], vf=[128, 64]))
+    policy_kwargs = dict(net_arch=dict(pi=[128, 64], vf=[128, 64]),
+                         log_std_init=-1.0)
 
     ckpt_path = find_latest_checkpoint() if args.resume else None
+    if ckpt_path is None and os.path.isdir(EVAL_LOG_DIR):
+        # Fresh run: drop stale eval events so the curve starts clean at step 0
+        # instead of mixing with a previous run's points.
+        shutil.rmtree(EVAL_LOG_DIR)
     if ckpt_path:
         print(f"[Resume] Loading checkpoint: {ckpt_path}")
         model = PPO.load(ckpt_path, env=env, tensorboard_log=LOG_DIR)
     else:
         model = PPO("MlpPolicy", env, verbose=0,
                     n_steps=4096, batch_size=args.batch_size,
-                    learning_rate=3e-4, ent_coef=0.01,
+                    learning_rate=1e-4, ent_coef=0.0,
                     policy_kwargs=policy_kwargs,
                     tensorboard_log=LOG_DIR)
 
     eval_cb = EvalAndSaveCallback(eval_env, save_freq=args.save_freq, n_eval_episodes=3)
 
-    model.learn(total_timesteps=args.total_steps, callback=eval_cb,
-                reset_num_timesteps=(ckpt_path is None), progress_bar=True)
+    # learn() treats total_timesteps as "steps to run THIS call", not a global
+    # target. On resume, subtract what's already done so we stop at the requested
+    # total instead of overshooting by a full total_steps on each resume.
+    remaining = args.total_steps - model.num_timesteps
+    if remaining > 0:
+        model.learn(total_timesteps=remaining, callback=eval_cb,
+                    reset_num_timesteps=(ckpt_path is None), progress_bar=True)
+    else:
+        print(f"[Done] num_timesteps {model.num_timesteps} already >= total_steps "
+              f"{args.total_steps}; skipping training.")
 
     final = os.path.join(CKPT_DIR, "final_model.zip")
     model.save(final)
