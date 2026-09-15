@@ -15,7 +15,6 @@ from std_msgs.msg import Float64MultiArray
 from mj_sim.msg import LowState, UpCmd
 from stable_baselines3 import PPO
 
-CTRL_EVERY_N = 4        # low_state arrives at 200Hz; run policy every 4 msgs = 50Hz
 ACTION_SCALE = 0.2      # action in [-1,1] -> joint-angle increment (rad), matches train_rl.py
 OBS_DIM = 3 + 3 + 18 + 18 + 6 + 3 + 18 + 18 + 72  # 159
 
@@ -35,15 +34,39 @@ def quat_to_projected_gravity(qw, qx, qy, qz):
     ], dtype=np.float32)
 
 
+DEFAULT_EXPERIMENT = "impact_weighted_fresh"
+
+
 def find_model():
+    """Return the configured experiment model, then fall back to the default model.
+
+    CUBOT_RL_MODEL  optional absolute or workspace-relative PPO checkpoint path
+    """
     candidates = []
+    configured = os.environ.get("CUBOT_RL_MODEL")
+    if configured:
+        candidates.append(os.path.abspath(configured))
+
+    script_dir = os.path.dirname(os.path.realpath(__file__))
+    p = os.path.normpath(script_dir)
+    for _ in range(8):
+        experiment_model = os.path.join(
+            p, "src", "mj_sim", "experiments", DEFAULT_EXPERIMENT,
+            "checkpoints", "best_model.zip")
+        if os.path.exists(experiment_model):
+            candidates.append(experiment_model)
+            break
+        parent = os.path.normpath(os.path.join(p, ".."))
+        if parent == p:
+            break
+        p = parent
+
     try:
         share = get_package_share_directory("mj_sim")
         candidates.append(os.path.join(share, "rl_checkpoints", "best_model.zip"))
     except Exception:
         pass
 
-    script_dir = os.path.dirname(os.path.realpath(__file__))
     p = os.path.normpath(script_dir)
     for _ in range(8):
         candidate = os.path.join(p, "src", "mj_sim", "rl_checkpoints", "best_model.zip")
@@ -60,8 +83,8 @@ def find_model():
             return path
 
     raise FileNotFoundError(
-        "best_model.zip not found. Searched:\n  " + "\n  ".join(candidates) +
-        "\nTrain the model first:  python3 src/mj_sim/scripts/train_rl.py")
+        "PPO model not found. Searched:\n  " + "\n  ".join(candidates) +
+        "\nTrain a model first: python3 src/mj_sim/scripts/train_rl.py")
 
 
 # ══════════════════════════════════════════════════════════════════════════

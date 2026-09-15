@@ -96,6 +96,48 @@ def _pillar_lines(rng, x0, x1, y0, y1, spacing, half_xy, half_z, h_max, ramp):
     return lines
 
 
+def _pillar_lines_omni(rng, half_range, clear_r, spacing, half_xy, half_z, h_max, ramp):
+    """Return geom lines for a symmetric pillar field around the spawn point.
+
+    Pillars tile a square on both axes so the robot meets terrain in every
+    direction (forward/backward/left/right); a circular clearing of radius
+    `clear_r` is left empty and heights ramp from 0 near the clearing up to
+    h_max (uniform) farther out, so the robot steps onto terrain gradually.
+
+    rng         seeded numpy RNG
+    half_range  pillar field half-extent (m)
+    clear_r     clearing radius (m) + ramp reference distance
+    spacing     pillar center spacing (m), < 2*half_xy -> overlap, no gaps
+    half_xy     pillar half-size in x/y (m)
+    half_z      pillar half-height (m); tops end up 0..h_max above ground
+    h_max       max top height above ground (m)
+    ramp        radial blend length (m) where heights ramp from 0
+    """
+    xs = np.arange(-half_range + spacing / 2, half_range, spacing)
+    ys = np.arange(-half_range + spacing / 2, half_range, spacing)
+    lines = []
+    k = 0
+    for y in ys:
+        for x in xs:
+            d = float(np.hypot(x, y))
+            if d < clear_r:
+                continue
+            h = rng.uniform(0.0, h_max)
+            if d < clear_r + ramp:
+                h *= (d - clear_r) / ramp
+            z = h - half_z
+            grey = rng.uniform(0.45, 0.65)
+            lines.append(
+                f'    <geom name="hill_{k}" type="box" '
+                f'size="{half_xy} {half_xy} {half_z}" '
+                f'pos="{x:.4f} {y:.4f} {z:.4f}" '
+                f'rgba="{grey:.3f} {grey:.3f} {grey:.3f} 1" '
+                f'friction="{FRICTION}" condim="{CONDIM}"/>'
+            )
+            k += 1
+    return lines
+
+
 def _stairs_lines():
     """Return geom lines for three near-spawn steps plus a top platform."""
     rgba = "0.50 0.45 0.40 1"
@@ -111,10 +153,9 @@ def _stairs_lines():
 def main():
     rng = np.random.default_rng(7)
 
-    hill = [_scene_header("cubot_hill", "0.8 0 0.15", "1.5"), _ground_line()]
-    hill += _pillar_lines(rng, x0=0.25, x1=1.45, y0=-0.6, y1=0.6,
-                          spacing=0.2, half_xy=0.15, half_z=0.1,
-                          h_max=0.03, ramp=0.3)
+    hill = [_scene_header("cubot_hill", "0 0 0.15", "1.2"), _ground_line()]
+    hill += _pillar_lines_omni(rng, half_range=0.95, clear_r=0.25, spacing=0.2,
+                               half_xy=0.15, half_z=0.1, h_max=0.03, ramp=0.3)
     hill += ["  </worldbody>", "</mujoco>"]
 
     stairs = [_scene_header("cubot_stairs", "0.7 0 0.15", "1.5"), _ground_line()]

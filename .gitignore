@@ -7,6 +7,10 @@ __pycache__
 # RL training artifacts (checkpoints / tensorboard logs)
 rl_checkpoints/
 rl_logs/
+src/mj_sim/experiments/
+
+# Terrain test output logs
+terrain_*_log.txt
 
 # Claude Code local settings
 .claude/
