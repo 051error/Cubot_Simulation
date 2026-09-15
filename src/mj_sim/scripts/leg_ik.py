@@ -1,20 +1,74 @@
-"""KD-tree IK for the 3-DOF hexapod leg.
+"""Analytic IK for the 3-DOF hexapod leg — port of C++ LegIK (ik_solver.cpp).
 
-Precomputed FK grid → cKDTree lookup. c1_rest frame: X=vertical, Y=forward,
-Z=lateral.
+The forward-kinematics helpers (_leg_fk / _leg_fk_batch) are kept for
+analysis_workspace_velocity.py; they are independent of the analytic IK below.
 """
 
 import numpy as np
-from scipy.spatial import cKDTree as _cKDTree
 
 
 # ══════════════════════════════════════════════════════════════════════════
-# PhantomX leg parameters (extracted from cubot.xml MJCF model)
+# Analytic IK (identical to C++ LegIK in ik_solver.cpp)
+# ══════════════════════════════════════════════════════════════════════════
+
+L0 = 0.054        # coxa link length (m)
+L1 = 0.0661       # femur link length (m)
+L2 = 0.1632       # tibia link, joint->foot tip (m)
+A10 = -1.791926   # thigh dir at thigh=0 (rad)
+OFFSET = 1.163566 # thigh<->tibia straight angle (rad)
+
+
+class LegIK:
+    """Analytic 3-DOF leg IK in the coxa frame (+X up, +Y outward, +Z fore/aft)."""
+
+    @staticmethod
+    def solve(x, y, z):
+        """Solve IK for one leg.
+
+        x,y,z  foot target in coxa frame
+        returns {coxa, thigh, tibia} qpos (rad)
+        """
+        angles = np.empty(3, dtype=np.float32)
+        angles[0] = np.arctan2(-z, -y)   # coxa yaw from horizontal direction
+
+        # Planar 2-link (thigh L1 + tibia L2) in the X-Y plane.
+        r = np.hypot(y, z)
+        dX = x
+        dY = L0 - r
+        D = np.hypot(dX, dY)
+
+        cos_q2 = np.clip(
+            (D * D - L1 * L1 - L2 * L2) / (2.0 * L1 * L2), -1.0, 1.0)
+        q2 = -np.arccos(cos_q2)   # negative = knee bent back
+
+        q1 = np.arctan2(dY, dX) \
+           - np.arctan2(L2 * np.sin(q2), L1 + L2 * np.cos(q2))
+
+        # Map planar angles back to MuJoCo qpos.
+        angles[1] = A10 - q1
+        angles[2] = q2 + OFFSET
+        return angles
+
+    @staticmethod
+    def is_reachable(x, y, z):
+        """True if the foot target lies within the leg's reach envelope."""
+        r = np.hypot(y, z)
+        D = np.hypot(x, L0 - r)
+        return bool(abs(L1 - L2) <= D <= L1 + L2)
+
+    @staticmethod
+    def clear_cache():
+        pass  # analytic IK is stateless
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# Forward kinematics (kept for analysis_workspace_velocity.py)
 # ══════════════════════════════════════════════════════════════════════════
 
 def _RotX(a):
     c, s = np.cos(a), np.sin(a)
     return np.array([[1, 0, 0], [0, c, -s], [0, s, c]])
+
 
 def _quat_to_R(qw, qx, qy, qz):
     """Convert quaternion (w,x,y,z) to 3x3 rotation matrix."""
@@ -38,61 +92,46 @@ _R_th  = _quat_to_R(1.76038e-12, -1.0, 1.32679e-06, 1.32679e-06)
 _p_tb  = np.array([0.0, -0.0645, -0.0145])
 _R_tb  = _quat_to_R(9.38231e-07, -9.3814e-07, -0.707073, 0.707141)
 
-# Foot tip in tibia local frame (lowest mesh vertex, computed from geom_pos + R_geom @ mesh_lowest)
+# Foot tip in tibia local frame (lowest mesh vertex).
 _FOOT_TIP = np.array([0.00162782, 0.16052104, 0.02951023])
 
 
-# ══════════════════════════════════════════════════════════════════════════
-# Forward Kinematics (scalar, for verification)
-# ══════════════════════════════════════════════════════════════════════════
-
 def _leg_fk(theta0, theta1, theta2):
-    """FK: (θ0,θ1,θ2) → foot position in c1_rest frame.
+    """FK: (theta0,theta1,theta2) -> foot position in c1_rest frame.
 
-    Body hierarchy (parent→child):
-      MP_BODY → c1_rf (j_c1_rf, POST) → c2_rf (fixed)
-              → thigh_rf (j_thigh_rf, PRE) → tibia_rf (j_tibia_rf, POST)
+    Body hierarchy (parent->child):
+      MP_BODY -> c1_rf (j_c1_rf, POST) -> c2_rf (fixed)
+              -> thigh_rf (j_thigh_rf, PRE) -> tibia_rf (j_tibia_rf, POST)
     """
-    # c1 in MP_BODY: POST-multiply
     R_c1_mp = _R_c1 @ _RotX(theta0)
-    p_c1_mp = _p_c1  # post: position does NOT rotate
+    p_c1_mp = _p_c1
 
-    # c2 in c1: FIXED (no joint between c1 and c2)
     R_c2_c1 = _R_c2
     p_c2_c1 = _p_c2
     R_c2_mp = R_c1_mp @ R_c2_c1
     p_c2_mp = p_c1_mp + R_c1_mp @ p_c2_c1
 
-    # thigh in c2: PRE-multiply
     R_th_c2 = _RotX(theta1) @ _R_th
-    p_th_c2 = _RotX(theta1) @ _p_th  # pre: position rotates
+    p_th_c2 = _RotX(theta1) @ _p_th
     R_th_mp = R_c2_mp @ R_th_c2
     p_th_mp = p_c2_mp + R_c2_mp @ p_th_c2
 
-    # tibia in thigh: POST-multiply
     R_tb_th = _R_tb @ _RotX(theta2)
-    p_tb_th = _p_tb  # post: position does NOT rotate
+    p_tb_th = _p_tb
     R_tb_mp = R_th_mp @ R_tb_th
     p_tb_mp = p_th_mp + R_th_mp @ p_tb_th
 
-    # Foot tip in MP_BODY, then transform to c1_rest
     p_foot_mp = p_tb_mp + R_tb_mp @ _FOOT_TIP
     return _R_c1.T @ (p_foot_mp - _p_c1)
 
 
-# ══════════════════════════════════════════════════════════════════════════
-# Vectorized FK for fast grid precomputation
-# ══════════════════════════════════════════════════════════════════════════
-
 def _leg_fk_batch(t0, t1, t2):
-    """Vectorized FK: (N,) joint arrays → (N,3) foot positions in c1_rest."""
+    """Vectorized FK: (N,) joint arrays -> (N,3) foot positions in c1_rest."""
     N = len(t0)
     c0, s0 = np.cos(t0), np.sin(t0)
     c1, s1 = np.cos(t1), np.sin(t1)
     c2, s2 = np.cos(t2), np.sin(t2)
 
-    # ── c1 in MP: POST-multiply ──
-    # R_c1_mp = _R_c1 @ RotX(θ0)
     rc1_00 = _R_c1[0, 0] * np.ones(N)
     rc1_01 = _R_c1[0, 1] * c0 + _R_c1[0, 2] * s0
     rc1_02 = -_R_c1[0, 1] * s0 + _R_c1[0, 2] * c0
@@ -108,99 +147,32 @@ def _leg_fk_batch(t0, t1, t2):
     R_c1_mp[:, 1, 0] = rc1_10; R_c1_mp[:, 1, 1] = rc1_11; R_c1_mp[:, 1, 2] = rc1_12
     R_c1_mp[:, 2, 0] = rc1_20; R_c1_mp[:, 2, 1] = rc1_21; R_c1_mp[:, 2, 2] = rc1_22
 
-    # p_c1_mp = _p_c1 (post: no rotation of position)
     p_c1_mp = np.tile(_p_c1, (N, 1))
 
-    # ── c2 in c1: FIXED ──
-    # R_c2_mp = R_c1_mp @ _R_c2
     R_c2_mp = R_c1_mp @ _R_c2
-    # p_c2_mp = p_c1_mp + R_c1_mp @ _p_c2
     p_c2_mp = p_c1_mp + np.einsum('nij,j->ni', R_c1_mp, _p_c2)
 
-    # ── thigh in c2: PRE-multiply ──
-    # R_th_c2 = RotX(θ1) @ _R_th
     Rx1 = np.empty((N, 3, 3))
     Rx1[:, 0, 0] = 1;  Rx1[:, 0, 1] = 0;   Rx1[:, 0, 2] = 0
     Rx1[:, 1, 0] = 0;  Rx1[:, 1, 1] = c1;   Rx1[:, 1, 2] = -s1
     Rx1[:, 2, 0] = 0;  Rx1[:, 2, 1] = s1;   Rx1[:, 2, 2] = c1
     R_th_c2 = Rx1 @ _R_th
-
-    # p_th_c2 = RotX(θ1) @ _p_th (= 0 since _p_th=[0,0,0])
     p_th_c2 = np.einsum('nij,j->ni', Rx1, _p_th)
 
-    # R_th_mp = R_c2_mp @ R_th_c2
     R_th_mp = R_c2_mp @ R_th_c2
-    # p_th_mp = p_c2_mp + R_c2_mp @ p_th_c2
     p_th_mp = p_c2_mp + np.einsum('nij,nj->ni', R_c2_mp, p_th_c2)
 
-    # ── tibia in thigh: POST-multiply ──
-    # R_tb_th = _R_tb @ RotX(θ2)
     Rx2 = np.empty((N, 3, 3))
     Rx2[:, 0, 0] = 1;  Rx2[:, 0, 1] = 0;   Rx2[:, 0, 2] = 0
     Rx2[:, 1, 0] = 0;  Rx2[:, 1, 1] = c2;   Rx2[:, 1, 2] = -s2
     Rx2[:, 2, 0] = 0;  Rx2[:, 2, 1] = s2;   Rx2[:, 2, 2] = c2
-    R_tb_th = _R_tb @ Rx2  # POST: _R_tb on left
+    R_tb_th = _R_tb @ Rx2
 
-    # p_tb_th = _p_tb (post: no rotation of position)
     p_tb_th = np.tile(_p_tb, (N, 1))
 
-    # R_tb_mp = R_th_mp @ R_tb_th
     R_tb_mp = R_th_mp @ R_tb_th
-    # p_tb_mp = p_th_mp + R_th_mp @ p_tb_th
     p_tb_mp = p_th_mp + np.einsum('nij,nj->ni', R_th_mp, p_tb_th)
 
-    # ── Foot tip in MP, then to c1_rest ──
     p_foot_mp = p_tb_mp + np.einsum('nij,j->ni', R_tb_mp, _FOOT_TIP)
 
-    # p_foot_c1_rest = _R_c1.T @ (p_foot_mp - _p_c1)
-    return (p_foot_mp - np.tile(_p_c1, (N, 1))) @ _R_c1  # = _R_c1.T @ (p - _p_c1)
-
-
-# ══════════════════════════════════════════════════════════════════════════
-# Precompute FK lookup table at module import
-# ══════════════════════════════════════════════════════════════════════════
-
-_FK_RES = 0.04  # rad — ~2.4mm avg accuracy, 439K points, ~0.33ms/query
-_tv = np.arange(-1.5, 1.5 + _FK_RES / 2, _FK_RES)
-_T0, _T1, _T2 = np.meshgrid(_tv, _tv, _tv, indexing='ij')
-_t0f, _t1f, _t2f = _T0.ravel(), _T1.ravel(), _T2.ravel()
-_fk_grid_p = _leg_fk_batch(_t0f, _t1f, _t2f).astype(np.float32)
-_fk_grid_q = np.column_stack([_t0f, _t1f, _t2f]).astype(np.float32)
-_kd_tree = _cKDTree(_fk_grid_p)
-
-
-# ══════════════════════════════════════════════════════════════════════════
-# Public API
-# ══════════════════════════════════════════════════════════════════════════
-
-class LegIK:
-    """IK via KD-tree lookup on the precomputed FK grid (76³ points, ~330 µs)."""
-
-    # Leg indexing matches XML body order:
-    #   Right side: rf=0, rm=1, rr=2
-    #   Left side:  lf=3, lm=4, lr=5  (mirrored kinematics)
-    _LEFT_LEGS = {3, 4, 5}
-
-    @staticmethod
-    def solve(x, y, z, leg_idx=0):
-        """Solve IK; left legs mirror Z and the resulting coxa angle."""
-        if leg_idx in LegIK._LEFT_LEGS:
-            z = -z  # mirror lateral coordinate for left legs
-            angles = _fk_grid_q[_kd_tree.query([x, y, z], k=1)[1]].astype(np.float32)
-            angles[0] = -angles[0]  # negate c1 angle for mirrored leg
-            return angles
-        else:
-            _dist, _kidx = _kd_tree.query([x, y, z], k=1)
-            return _fk_grid_q[_kidx].astype(np.float32)
-
-    @staticmethod
-    def clear_cache():
-        pass  # stateless KD-tree lookup
-
-    @staticmethod
-    def is_reachable(x, y, z):
-        _dist, _kidx = _kd_tree.query([x, y, z], k=1)
-        p = _leg_fk(float(_fk_grid_q[_kidx, 0]),
-                     float(_fk_grid_q[_kidx, 1]),
-                     float(_fk_grid_q[_kidx, 2]))
-        return np.linalg.norm(p - [x, y, z]) < 0.01
+    return (p_foot_mp - np.tile(_p_c1, (N, 1))) @ _R_c1

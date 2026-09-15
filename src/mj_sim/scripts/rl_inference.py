@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""CPG+RL inference node — aligned with arXiv:2310.07744.
+"""CPG+RL inference node — residual joint-angle policy.
 
-Pipeline: RL policy → CPG foot params (8D) → foot positions → IK → /rl_action.
-Observation (71D): gravity(3)+body_vel(3)+feet_pos(18)+feet_vel(18)+contact(6)
-+cmd(3)+prev_action(8)+osc_state(12).
+Pipeline: C++ tripod CPG target (200Hz) + RL residual (50Hz) -> /rl_action.
+Observation (159D): gravity(3)+body_vel(3)+joint_pos(18)+joint_vel(18)
++contact(6)+cmd(3)+prev_action(18)+q_target(18)+height_map(72).
 """
 
-import os, sys, time
+import os
 import numpy as np
 import rclpy
 from rclpy.node import Node
@@ -15,13 +15,11 @@ from std_msgs.msg import Float64MultiArray
 from mj_sim.msg import LowState, UpCmd
 from stable_baselines3 import PPO
 
-CTRL_DT = 0.02          # 50Hz, must match train_rl.py
-CTRL_EVERY_N = 4        # low_state arrives at 200Hz; run policy every 4 msgs = 50Hz
-N_CPG_PARAMS = 8        # must match train_rl.py
-OBS_DIM = 3 + 3 + 18 + 18 + 6 + 3 + N_CPG_PARAMS + 12  # 71
+ACTION_SCALE = 0.2      # action in [-1,1] -> joint-angle increment (rad), matches train_rl.py
+OBS_DIM = 3 + 3 + 18 + 18 + 6 + 3 + 18 + 18 + 72  # 159
 
-from leg_ik import LegIK
-from hexapod_cpg import HexapodCPG
+from cpg_gait import TripodGait, FootTrajectory, compute_joint_targets, JOINT_REF
+from height_map import rangefinder_to_height_map
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -36,15 +34,39 @@ def quat_to_projected_gravity(qw, qx, qy, qz):
     ], dtype=np.float32)
 
 
+DEFAULT_EXPERIMENT = "impact_weighted_fresh"
+
+
 def find_model():
+    """Return the configured experiment model, then fall back to the default model.
+
+    CUBOT_RL_MODEL  optional absolute or workspace-relative PPO checkpoint path
+    """
     candidates = []
+    configured = os.environ.get("CUBOT_RL_MODEL")
+    if configured:
+        candidates.append(os.path.abspath(configured))
+
+    script_dir = os.path.dirname(os.path.realpath(__file__))
+    p = os.path.normpath(script_dir)
+    for _ in range(8):
+        experiment_model = os.path.join(
+            p, "src", "mj_sim", "experiments", DEFAULT_EXPERIMENT,
+            "checkpoints", "best_model.zip")
+        if os.path.exists(experiment_model):
+            candidates.append(experiment_model)
+            break
+        parent = os.path.normpath(os.path.join(p, ".."))
+        if parent == p:
+            break
+        p = parent
+
     try:
         share = get_package_share_directory("mj_sim")
         candidates.append(os.path.join(share, "rl_checkpoints", "best_model.zip"))
     except Exception:
         pass
 
-    script_dir = os.path.dirname(os.path.realpath(__file__))
     p = os.path.normpath(script_dir)
     for _ in range(8):
         candidate = os.path.join(p, "src", "mj_sim", "rl_checkpoints", "best_model.zip")
@@ -61,8 +83,8 @@ def find_model():
             return path
 
     raise FileNotFoundError(
-        "best_model.zip not found. Searched:\n  " + "\n  ".join(candidates) +
-        "\nTrain the model first:  python3 src/mj_sim/scripts/train_rl.py")
+        "PPO model not found. Searched:\n  " + "\n  ".join(candidates) +
+        "\nTrain a model first: python3 src/mj_sim/scripts/train_rl.py")
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -77,9 +99,12 @@ class RLPolicyNode(Node):
         self.model = PPO.load(model_path)
         self.get_logger().info(f"Loaded CPG+RL model: {model_path}")
 
-        self.cpg = HexapodCPG(n_legs=6, dt=CTRL_DT)
+        self.cpg = TripodGait()
+        self.traj = FootTrajectory()
         self.cmd = np.array([0.0, 0.0, 0.0], dtype=np.float32)
-        self._prev_action = np.zeros(N_CPG_PARAMS, dtype=np.float32)
+        self._prev_action = np.zeros(18, dtype=np.float32)
+        self._current_action = np.zeros(18, dtype=np.float32)
+        self._q_target = JOINT_REF.copy()
         self._msg_count = 0   # decimate 200Hz low_state down to 50Hz
 
         self.state_sub = self.create_subscription(
@@ -94,57 +119,59 @@ class RLPolicyNode(Node):
     def cmd_callback(self, msg: UpCmd):
         # RL handles only the left stick (linear_x/y). Rotation is delegated to
         # the dedicated TURN mode, so the right stick (angular_z) is ignored here.
-        self.cmd = np.array([msg.linear_x, msg.linear_y, 0.0], dtype=np.float32)
+        # Invert to match NORMAL mode (robot_ctrl.cpp: bvx=-vx, bvy=-vy): the Xbox
+        # stick-forward is axes[1]<0, so linear_x is negative for forward; without
+        # this inversion RL mode drives in reverse of the stick.
+        self.cmd = np.array([-msg.linear_x, -msg.linear_y, 0.0], dtype=np.float32)
 
     def state_callback(self, msg: LowState):
-        # low_state is published at 200Hz but the CPG/policy run at 50Hz.
-        # Only process every CTRL_EVERY_N-th message so CPG dt=0.02 stays
-        # wall-clock aligned (matches train_rl.py env cadence).
         self._msg_count += 1
-        if self._msg_count % CTRL_EVERY_N != 0:
-            return
 
+        # CPG integrates at 200Hz (every low_state); the RL residual is held at
+        # 50Hz. Publish q_target + residual every message so the full-rate CPG
+        # motion reaches the robot (matches train_rl.py's inner-loop cadence).
+        self._q_target = compute_joint_targets(self.cpg, self.traj,
+                                               self.cmd[0], self.cmd[1])
+
+        if self._msg_count % CTRL_EVERY_N == 0:
+            obs = self._build_obs(msg)
+            action, _ = self.model.predict(obs, deterministic=True)
+            self._current_action = np.asarray(action, dtype=np.float32)
+            self._prev_action = self._current_action.copy()
+
+        q = self._q_target + self._current_action * ACTION_SCALE
+        cmd = Float64MultiArray()
+        cmd.data = np.clip(q, -2.5, 2.5).tolist()
+        self.action_pub.publish(cmd)
+
+    def _build_obs(self, msg: LowState):
         imu = msg.imu_quat
         projected_gravity = quat_to_projected_gravity(imu[0], imu[1], imu[2], imu[3])
-        osc_state = self.cpg.get_osc_state()
+
+        # 360° rangefinder -> robot-centric local height map (72 ground heights).
+        height_map = rangefinder_to_height_map(np.asarray(msg.rangefinder))
 
         obs = np.concatenate([
-            projected_gravity,
-            np.array(msg.body_vel, dtype=np.float32) / [0.3, 0.3, 2.0],
-            np.array(msg.feet_pos, dtype=np.float32) / 0.2,
-            np.array(msg.feet_vel, dtype=np.float32) / 0.5,
-            np.array(msg.foot_contact, dtype=np.float32),
-            self.cmd.copy() / np.array([0.05, 0.05, 1.0], dtype=np.float32),
-            self._prev_action.copy(),
-            osc_state,
+            projected_gravity,                               # 3
+            np.array(msg.body_vel, dtype=np.float32) / [0.3, 0.3, 2.0],   # 3
+            np.array(msg.leg_pos, dtype=np.float32) / 1.0,   # 18
+            np.array(msg.leg_vel, dtype=np.float32) / 5.0,   # 18
+            np.array(msg.foot_contact, dtype=np.float32),    # 6
+            self.cmd.copy() / np.array([0.05, 0.05, 1.0], dtype=np.float32),  # 3
+            self._prev_action.copy(),                        # 18
+            self._q_target / 1.0,                            # 18
+            height_map / 0.5,                                # 72
         ])
-        obs = np.clip(obs, -10.0, 10.0)
-
-        # RL → CPG foot params → foot positions → IK → joint angles
-        action, _ = self.model.predict(obs, deterministic=True)
-        self._prev_action = action.copy()
-
-        # No forward bias — RL directly controls all 8 CPG params.
-        # action[0] ∈ [-1,1] → coxa_amp ∈ [0.005, 0.025]m.
-        foot_targets = self.cpg.step(action)
-        joint_targets = np.empty(18, dtype=np.float32)
-        for i in range(6):
-            j = i * 3
-            angles = LegIK.solve(
-                foot_targets[j + 2],  # c1_rest X = vertical (CPG z)
-                foot_targets[j + 1],  # c1_rest Y = forward  (CPG y)
-                foot_targets[j + 0],  # c1_rest Z = lateral  (CPG x)
-                leg_idx=i,
-            )
-            joint_targets[j:j+3] = angles
-
-        scaled = np.clip(joint_targets, -2.5, 2.5)
-        cmd = Float64MultiArray()
-        cmd.data = scaled.tolist()
-        self.action_pub.publish(cmd)
+        return np.clip(obs, -10.0, 10.0).astype(np.float32)
 
 
 def main():
+    # Lower this node's CPU priority so its CPG+IK+PPO load does not starve the
+    # simulator's physics loop (which destabilises NORMAL/RL motion).
+    try:
+        os.nice(10)
+    except PermissionError:
+        pass
     rclpy.init()
     node = RLPolicyNode()
     rclpy.spin(node)

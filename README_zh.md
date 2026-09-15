@@ -7,6 +7,21 @@ PhantomX 式三自由度腿部布局（偏航 coxa + 俯仰 femur + 俯仰 tibia
 中枢模式发生器（CPG）生成，并通过逆运动学（IK）求解；同时提供一版在 CPG
 层之上训练的强化学习（RL）策略。
 
+## 演示
+
+| 开盖 | 前后移动 |
+| --- | --- |
+| ![打开前盖](docs/media/front_lid.gif) | ![前后移动](docs/media/go_strait.gif) |
+
+| 侧向移动 | 原地转向 |
+| --- | --- |
+| ![侧向移动](docs/media/lateral.gif) | ![原地转向](docs/media/turn.gif) |
+
+- [平地仿真视频](docs/media/video-1.mp4)
+- [丘陵地形仿真视频](docs/media/terrain_video-1.mp4)
+
+> GitHub 的 Markdown 对 MP4 内联播放支持不稳定；请通过以上链接打开或下载完整视频。
+
 ## 概述
 
 整个栈围绕一条三阶段管线组织：
@@ -18,7 +33,7 @@ CPG（Hopf 振荡器）  →  足端目标  →  IK  →  关节角度  →  MuJ
 - **三足步态 CPG** 为每条腿产生相位信号（`x`）与正交信号（`y`）。
 - **足端轨迹** 将这些信号映射为机体坐标系下的足端目标，目标沿与指令速度
   相反的方向扫过一条直线。
-- **解析 IK**（C++）或 **KD-tree IK**（Python，供 RL 使用）把每个足端目标
+- **解析 IK**（C++）或匹配的 Python 解析求解器（RL 使用）把每个足端目标
   转换为三个绝对关节角度。
 - **MuJoCo 仿真器** 积分物理并把机器人状态以 200 Hz 回传给控制器。
 
@@ -27,7 +42,7 @@ CPG（Hopf 振荡器）  →  足端目标  →  IK  →  关节角度  →  MuJ
 - **三种运动模式**，用手柄肩键切换：
   - **NORMAL** — 摇杆驱动的 CPG 行走（前进 / 后退 / 侧向）。
   - **TURN** — 固定参数的 CPG 原地旋转。
-  - **RL** — 训练好的 PPO 策略通过 CPG 层驱动全部 18 个腿部关节。
+  - **RL** — PPO 策略在 200 Hz CPG + IK 目标上施加 18 维关节角残差；策略输入关节、IMU、接触、指令、CPG 目标及 72 路机体中心地形高度图。
 - **机体坐标系下的直线足端扫掠**（无 coxa 圆弧），消除了圆弧轨迹在边角腿
   上泄漏出来的侧向打滑。
 - **两套 IK 后端**共享同一套腿部几何：用于实时控制的闭式 C++ 求解器，以及
@@ -60,17 +75,19 @@ mj_sim/
 │   ├── LowState.msg      # /mujoco/low_state（关节、IMU、足端、接触）
 │   └── UpCmd.msg         # /upper_ctrl（高层速度指令）
 ├── models/
-│   ├── scene.xml         # 世界 + 地面
-│   ├── terrain.xml       # 平地 + 台阶 + 起伏凸起（RL 地形）
+│   ├── scene.xml         # 平地
+│   ├── hill.xml          # 以出生点为中心的全向低丘（RL 训练）
+│   ├── terrain.xml       # 旧版混合地形
 │   ├── cubot.xml         # 机器人 MJCF（由 convert_urdf.py 生成）
 │   └── meshes/           # 模型网格（与 cubot.xml 同目录，保证相对路径）
 └── scripts/
     ├── mujoco_simulator.py            # MuJoCo 物理 + /mujoco/low_state 发布者
     ├── convert_urdf.py                # URDF → MJCF 转换器
+    ├── cpg_gait.py                    # Python CPG + 足端轨迹 + 解析 IK
+    ├── height_map.py                  # 72 路地形高度编码
     ├── leg_ik.py                      # KD-tree IK（RL 使用）
-    ├── hexapod_cpg.py                 # Hopf 振荡器 CPG（RL 使用）
-    ├── train_rl.py                    # PPO 训练（参考 arXiv:2310.07744）
-    ├── rl_inference.py                # RL 策略节点
+    ├── train_rl.py                    # 丘陵地形上的 CPG residual PPO 训练
+    ├── rl_inference.py                # 50 Hz PPO 策略 + 200 Hz CPG 节点
     ├── test_straight_line.py          # 打滑 + 直线测试
     ├── test_turn_balance.py           # 转向平衡测试
     └── analysis_workspace_velocity.py # 足端工作空间 / CPG 速度分析
@@ -98,8 +115,12 @@ source install/setup.bash
 在两个终端中分别启动仿真器（会打开 MuJoCo 视图）和控制器：
 
 ```bash
-# 终端 1 —— 物理 + 状态发布者
+# 终端 1 —— 物理 + 状态发布者（默认平地）
 ros2 run mj_sim mujoco_simulator.py
+
+# 使用以出生点为中心的丘陵场景，或不打开视图运行 headless 模式
+ros2 run mj_sim mujoco_simulator.py --scene hill.xml
+ros2 run mj_sim mujoco_simulator.py --scene hill.xml --headless
 
 # 终端 2 —— 控制器（同时 fork 出 joy_node 以支持手柄）
 ros2 run mj_sim robot_ctrl
@@ -155,23 +176,24 @@ python3 src/mj_sim/scripts/test_turn_balance.py --duration 30
 
 ## RL 训练
 
-RL 管线沿用 [arXiv:2310.07744](https://arxiv.org/abs/2310.07744)（面向六足
-运动的、具备地形自适应能力的 CPG + RL）的架构：策略输出 8 个 CPG 足端轨迹
-参数，Hopf 振荡器将其转化为足端位置，KD-tree IK 再解出关节角度。
+RL 使用 CPG-residual 架构：200 Hz 的 CPG 与解析 IK 产生名义关节目标，50 Hz PPO 策略输出 18 维关节角残差。其 159 维观测由本体状态、IMU、接触、指令、上一次 action、CPG 目标和 72 路机体中心地形高度图组成。
 
-通过 `--scene` 可选两种场景：
+训练使用以出生点为中心的全向丘陵场，并包含地形自适应参考速度、防停滞、接触感知滑移与冲击感知的稳定性成本。
 
 | 场景 | 地面 |
 | --- | --- |
-| `scene.xml`（默认） | 平坦地面 |
-| `terrain.xml` | 平地 + 台阶 + 平台 + 起伏凸起 |
+| `scene.xml` | 平地 |
+| `hill.xml` | 用于 RL 训练的全向低丘 |
+| `terrain.xml` | 旧版混合地形 |
 
 ```bash
-# 在平坦地面上训练（默认）
+# 训练或恢复默认丘陵地形训练
 python3 src/mj_sim/scripts/train_rl.py --total_steps 5000000
 
-# 在起伏地形上训练
-python3 src/mj_sim/scripts/train_rl.py --scene terrain.xml --total_steps 5000000
+# 启动新的独立训练（显式设置输出目录）
+CUBOT_RL_LOG_DIR=path/to/logs \
+CUBOT_RL_CKPT_DIR=path/to/checkpoints \
+python3 src/mj_sim/scripts/train_rl.py --fresh --total_steps 3000000
 
 # 运行训练好的策略（发布 /rl_action）
 ros2 run mj_sim rl_inference.py

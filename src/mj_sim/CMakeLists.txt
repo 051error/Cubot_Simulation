@@ -55,7 +55,7 @@ install(TARGETS xbox_controller ik_solver robot_ctrl
 )
 
 install(PROGRAMS scripts/mujoco_simulator.py scripts/train_rl.py scripts/rl_inference.py
-  scripts/leg_ik.py scripts/hexapod_cpg.py
+  scripts/leg_ik.py scripts/cpg_gait.py scripts/height_map.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
